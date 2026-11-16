@@ -24,154 +24,29 @@ import {
 
 const INITIAL_PROFILE: CandidateProfile = {
   id: DEFAULT_USER_ID,
-  full_name: "Ada Lovelace",
-  email: "ada@analytical.org",
-  phone: "+1 (415) 555-0199",
-  location: "San Francisco, CA (Remote)",
-  linkedin_url: "https://linkedin.com/in/adalovelace",
-  portfolio_url: "https://analytical.org",
-  github_url: "https://github.com/adalovelace",
-  resume_url: `${DEFAULT_USER_ID}/resume.pdf`,
+  full_name: null,
+  email: null,
+  phone: null,
+  location: "Remote",
+  linkedin_url: null,
+  portfolio_url: null,
+  github_url: null,
+  resume_url: null,
   parsed_cv_json: {
-    skills: [
-      "Python",
-      "FastAPI",
-      "Playwright",
-      "TypeScript",
-      "Next.js",
-      "PostgreSQL",
-      "pgvector",
-      "Docker",
-    ],
-    experience_years: 6,
+    skills: [],
+    experience_years: 0,
     work_history: [],
     education: [],
-    target_roles: [
-      "Senior Backend Engineer",
-      "AI Agent Engineer",
-      "Full-Stack TypeScript/Python Engineer",
-    ],
+    target_roles: [],
   },
   auto_apply_enabled: true,
   daily_apply_limit: 15,
   min_match_score: 75,
 };
 
-const INITIAL_QA_BANK: QABankItem[] = [
-  {
-    user_id: DEFAULT_USER_ID,
-    question_key: "work_authorization",
-    question_label:
-      "Are you legally authorized to work in your target job country without restrictions?",
-    answer_value: "Yes — Authorized without restrictions",
-    is_answered: true,
-  },
-  {
-    user_id: DEFAULT_USER_ID,
-    question_key: "visa_sponsorship_required",
-    question_label:
-      "Will you now or in the future require visa sponsorship for employment?",
-    answer_value: "No sponsorship required",
-    is_answered: true,
-  },
-  {
-    user_id: DEFAULT_USER_ID,
-    question_key: "salary_expectation_usd",
-    question_label:
-      "What is your minimum annual base salary expectation (in USD)?",
-    answer_value: "",
-    is_answered: false,
-  },
-  {
-    user_id: DEFAULT_USER_ID,
-    question_key: "notice_period_days",
-    question_label:
-      "What is your current notice period or earliest available start date (in days)?",
-    answer_value: "",
-    is_answered: false,
-  },
-];
+const INITIAL_QA_BANK: QABankItem[] = [];
 
-const INITIAL_APPLICATIONS: ApplicationRecord[] = [
-  {
-    id: "app-101",
-    user_id: DEFAULT_USER_ID,
-    job_id: "job-101",
-    match_score: 94,
-    match_reasoning:
-      "Exact alignment on Python, FastAPI, Playwright stealth automation, and pgvector.",
-    status: "applied",
-    tailored_cover_letter: "Tailored cover letter for Anthropic.",
-    submitted_answers_json: {
-      "#first_name": "Ada",
-      "#last_name": "Lovelace",
-      "#email": "ada@analytical.org",
-      "#phone": "+1 (415) 555-0199",
-      "#work_authorization": "Yes",
-      "#resume_file": "resumes/00000000-0000-0000-0000-000000000001/resume.pdf",
-    },
-    proof_screenshot_url:
-      "proofs/00000000-0000-0000-0000-000000000001/app-101.png",
-    error_log: null,
-    applied_at: "2026-11-16T20:45:00.000Z",
-    created_at: "2026-11-16T20:40:00.000Z",
-    jobs_discovered: {
-      company_name: "Anthropic",
-      job_title: "Senior AI Systems Engineer",
-      location: "San Francisco, CA / Remote",
-      remote_type: "remote",
-      source: "greenhouse",
-      apply_url: "https://boards.greenhouse.io/anthropic",
-    },
-  },
-  {
-    id: "app-102",
-    user_id: DEFAULT_USER_ID,
-    job_id: "job-102",
-    match_score: 88,
-    match_reasoning:
-      "Strong match on Next.js App Router, TypeScript, and Supabase PostgreSQL.",
-    status: "needs_human_input",
-    tailored_cover_letter: null,
-    submitted_answers_json: {},
-    proof_screenshot_url: null,
-    error_log:
-      "Paused for unanswered screening question(s): What is your minimum annual base salary expectation (in USD)?",
-    applied_at: null,
-    created_at: "2026-11-16T20:55:00.000Z",
-    jobs_discovered: {
-      company_name: "Supabase",
-      job_title: "Full-Stack Cloud Platform Engineer",
-      location: "Remote",
-      remote_type: "remote",
-      source: "ashby",
-      apply_url: "https://jobs.ashbyhq.com/supabase",
-    },
-  },
-  {
-    id: "app-103",
-    user_id: DEFAULT_USER_ID,
-    job_id: "job-103",
-    match_score: 82,
-    match_reasoning:
-      "Passed Stage-1 cosine threshold (0.68) and Stage-2 LLM evaluation.",
-    status: "queued",
-    tailored_cover_letter: null,
-    submitted_answers_json: {},
-    proof_screenshot_url: null,
-    error_log: null,
-    applied_at: null,
-    created_at: "2026-11-16T21:05:00.000Z",
-    jobs_discovered: {
-      company_name: "Stripe",
-      job_title: "Backend Infrastructure Engineer",
-      location: "Remote - US",
-      remote_type: "remote",
-      source: "greenhouse",
-      apply_url: "https://boards.greenhouse.io/stripe",
-    },
-  },
-];
+const INITIAL_APPLICATIONS: ApplicationRecord[] = [];
 
 export default function DashboardPage() {
   const [profile, setProfile] = useState<CandidateProfile>(INITIAL_PROFILE);
@@ -188,10 +63,10 @@ export default function DashboardPage() {
         if (!res.ok) return;
         const data = await res.json();
         if (data.profile) setProfile(data.profile);
-        if (Array.isArray(data.qa_bank) && data.qa_bank.length > 0) {
+        if (Array.isArray(data.qa_bank)) {
           setQaBank(data.qa_bank);
         }
-        if (Array.isArray(data.applications) && data.applications.length > 0) {
+        if (Array.isArray(data.applications)) {
           setApplications(data.applications);
         }
       } catch {
@@ -207,10 +82,10 @@ export default function DashboardPage() {
       if (!res.ok) return;
       const data = await res.json();
       if (data.profile) setProfile(data.profile);
-      if (Array.isArray(data.qa_bank) && data.qa_bank.length > 0) {
+      if (Array.isArray(data.qa_bank)) {
         setQaBank(data.qa_bank);
       }
-      if (Array.isArray(data.applications) && data.applications.length > 0) {
+      if (Array.isArray(data.applications)) {
         setApplications(data.applications);
       }
     } catch {

@@ -259,10 +259,16 @@ TASK_ROUTES: Dict[str, List[ProviderEndpoint]] = {
             api_key_attr="GEMINI_API_KEY",
         ),
         ProviderEndpoint(
-            provider="gemini",
-            model="gemini-2.0-flash",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key_attr="GEMINI_API_KEY",
+            provider="groq",
+            model="openai/gpt-oss-120b",
+            base_url="https://api.groq.com/openai/v1",
+            api_key_attr="GROQ_API_KEY",
+        ),
+        ProviderEndpoint(
+            provider="groq",
+            model="qwen/qwen3.8-27b",
+            base_url="https://api.groq.com/openai/v1",
+            api_key_attr="GROQ_API_KEY",
         ),
         ProviderEndpoint(
             provider="openrouter",
@@ -283,6 +289,18 @@ TASK_ROUTES: Dict[str, List[ProviderEndpoint]] = {
             model="gemini-3.5-flash-lite",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             api_key_attr="GEMINI_API_KEY",
+        ),
+        ProviderEndpoint(
+            provider="groq",
+            model="openai/gpt-oss-120b",
+            base_url="https://api.groq.com/openai/v1",
+            api_key_attr="GROQ_API_KEY",
+        ),
+        ProviderEndpoint(
+            provider="groq",
+            model="qwen/qwen3.8-27b",
+            base_url="https://api.groq.com/openai/v1",
+            api_key_attr="GROQ_API_KEY",
         ),
         ProviderEndpoint(
             provider="openrouter",
