@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  backend-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: autonomous-job-agent-backend
+    env_file:
+      - .env
+    environment:
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - PLAYWRIGHT_HEADLESS=true
+    ports:
+      - "8000:8000"
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  frontend-dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: autonomous-job-agent-frontend
+    env_file:
+      - .env
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=http://backend-worker:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend-worker
+    restart: unless-stopped

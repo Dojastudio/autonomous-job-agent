@@ -1,0 +1,54 @@
+name: Autonomous Job Discovery & Playwright Auto-Apply
+
+on:
+  # Runs automatically every 4 hours ($0 cost on GitHub Actions)
+  schedule:
+    - cron: "0 */4 * * *"
+
+  # Triggered on-demand when clicking "Run Discovery & Apply Now" on the Vercel Dashboard
+  workflow_dispatch:
+    inputs:
+      user_id:
+        description: "Candidate User UUID (optional — defaults to all active profiles)"
+        required: false
+        default: "00000000-0000-0000-0000-000000000001"
+
+jobs:
+  discover-and-auto-apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      PLAYWRIGHT_HEADLESS: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Backend & Playwright Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Execute Discovery, Two-Stage pgvector Matching & Playwright Auto-Applier
+        run: |
+          if [ -n "${{ github.event.inputs.user_id }}" ]; then
+            python -m backend.worker.run_sweep --user-id "${{ github.event.inputs.user_id }}"
+          else
+            python -m backend.worker.run_sweep
+          fi
