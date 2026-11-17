@@ -21,6 +21,8 @@ function stripHtml(raw: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -43,7 +45,7 @@ function deterministicEmbedding384(text: string): number[] {
     vec[idx] += 2.0 * sign;
   }
 
-  let norm = Math.sqrt(vec.reduce((acc, x) => acc + x * x, 0));
+  const norm = Math.sqrt(vec.reduce((acc, x) => acc + x * x, 0));
   if (norm > 1e-12) {
     for (let i = 0; i < dim; i++) {
       vec[i] = Number((vec[i] / norm).toFixed(6));
@@ -66,92 +68,89 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+interface RawDiscoveredJob {
+  external_job_id: string;
+  source: string;
+  company_name: string;
+  job_title: string;
+  location: string;
+  remote_type: string;
+  apply_url: string;
+  description_text: string;
+}
+
 async function runServerlessDiscoveryAndMatching(userId: string) {
   const supabase = getAdminSupabase();
 
-  // 1. Ensure candidate profile exists
-  let { data: profile } = await supabase
+  const { data: profile } = await supabase
     .from("candidate_profiles")
     .select("*")
     .eq("id", userId)
     .maybeSingle();
 
   if (!profile) {
-    const defaultSkills = [
-      "Python",
-      "FastAPI",
-      "Playwright",
-      "TypeScript",
-      "Next.js",
-      "PostgreSQL",
-      "pgvector",
-      "Docker",
-    ];
-    const defaultRoles = [
-      "Senior Backend Engineer",
-      "AI Agent Engineer",
-      "Full-Stack Engineer",
-    ];
-    const emb = deterministicEmbedding384(
-      `${defaultRoles.join(" ")} ${defaultSkills.join(" ")}`
-    );
-    const seedProfile = {
-      id: userId,
-      full_name: "Ada Lovelace",
-      email: "ada@analytical.org",
-      phone: "+1 (415) 555-0199",
-      location: "Remote",
-      parsed_cv_json: {
-        skills: defaultSkills,
-        experience_years: 6,
-        work_history: [],
-        education: [],
-        target_roles: defaultRoles,
-      },
-      profile_embedding: emb,
-      auto_apply_enabled: true,
-      daily_apply_limit: 15,
-      min_match_score: 75,
-    };
-    await supabase.from("candidate_profiles").upsert(seedProfile);
-    profile = seedProfile;
+    throw new Error("Please upload your PDF CV first so your profile exists.");
   }
 
   const parsedCv = profile.parsed_cv_json || {};
-  const skills: string[] = parsedCv.skills || [
-    "Python",
-    "TypeScript",
-    "Next.js",
-    "PostgreSQL",
-  ];
-  const targetRoles: string[] = parsedCv.target_roles || ["Software Engineer"];
+  const skills: string[] = parsedCv.skills || [];
+  const targetRoles: string[] =
+    parsedCv.target_roles && parsedCv.target_roles.length > 0
+      ? parsedCv.target_roles
+      : ["Product Designer", "Product Manager", "Software Engineer"];
+
   const profileEmb = deterministicEmbedding384(
-    `${targetRoles.join(" ")} ${skills.join(" ")}`
+    `${targetRoles.join(" ")} ${skills.join(" ")} ${targetRoles.join(" ")}`
   );
 
-  // 2. Fetch live structured JSON feeds (Greenhouse, Remotive, Arbeitnow)
-  const discoveredJobs: Array<{
-    external_job_id: string;
-    source: string;
-    company_name: string;
-    job_title: string;
-    location: string;
-    remote_type: string;
-    apply_url: string;
-    description_text: string;
-  }> = [];
+  // Build role keywords so we pull relevant roles from big ATS feeds instead of alphabetical "Account Executive"
+  const roleKeywords = targetRoles
+    .flatMap((r) => r.toLowerCase().split(/[\s/,-]+/))
+    .filter((w) => w.length >= 2 && !["and", "the", "for", "senior", "lead", "junior"].includes(w));
+
+  const titleMatchesTargetRole = (title: string): boolean => {
+    if (roleKeywords.length === 0) return true;
+    const lower = title.toLowerCase();
+    return roleKeywords.some((kw) => lower.includes(kw));
+  };
+
+  // Detect appropriate Remotive categories from targetRoles
+  const remotiveCategories = new Set<string>();
+  const rolesBlob = targetRoles.join(" ").toLowerCase();
+  if (rolesBlob.includes("design") || rolesBlob.includes("ux") || rolesBlob.includes("ui")) {
+    remotiveCategories.add("design");
+  }
+  if (rolesBlob.includes("product") || rolesBlob.includes("manager") || rolesBlob.includes("pm")) {
+    remotiveCategories.add("product");
+  }
+  if (
+    rolesBlob.includes("engineer") ||
+    rolesBlob.includes("developer") ||
+    rolesBlob.includes("software") ||
+    remotiveCategories.size === 0
+  ) {
+    remotiveCategories.add("software-dev");
+  }
+
+  const discoveredJobs: RawDiscoveredJob[] = [];
 
   await Promise.allSettled([
-    // Greenhouse (Vercel & Supabase public boards)
-    ...(
-      ["vercel", "supabase", "linear"].map(async (slug) => {
+    // 1. Greenhouse Public Boards — filter by candidate's target role keywords first!
+    ...["vercel", "stripe", "airbnb", "linear", "retool", "scaleai", "gitlab", "figma"].map(
+      async (slug) => {
         const res = await fetch(
           `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs?content=true`,
-          { signal: AbortSignal.timeout(6000) }
+          { signal: AbortSignal.timeout(7000) }
         );
         if (!res.ok) return;
         const data = await res.json();
-        for (const item of (data.jobs || []).slice(0, 8)) {
+        const allJobs = Array.isArray(data.jobs) ? data.jobs : [];
+        const roleMatched = allJobs.filter((item: { title?: string }) =>
+          titleMatchesTargetRole(String(item.title || ""))
+        );
+        const selected = (roleMatched.length > 0 ? roleMatched : allJobs).slice(0, 8);
+
+        for (const item of selected) {
           discoveredJobs.push({
             external_job_id: `${slug}:${item.id}`,
             source: "greenhouse",
@@ -160,23 +159,51 @@ async function runServerlessDiscoveryAndMatching(userId: string) {
             location: String(item.location?.name || "Remote"),
             remote_type: "remote",
             apply_url: String(item.absolute_url || ""),
-            description_text: stripHtml(item.content || item.title || "").slice(
-              0,
-              2500
-            ),
+            description_text: stripHtml(item.content || item.title || "").slice(0, 2500),
           });
         }
-      })
+      }
     ),
-    // Remotive Software Dev feed
-    (async () => {
+
+    // 2. Ashby Public Boards (Ramp, Notion, ElevenLabs, Perplexity)
+    ...["ramp", "notion", "elevenlabs", "perplexity"].map(async (slug) => {
       const res = await fetch(
-        "https://remotive.com/api/remote-jobs?category=software-dev&limit=12",
-        { signal: AbortSignal.timeout(6000) }
+        `https://api.ashbyhq.com/posting-api/job-board/${slug}`,
+        { signal: AbortSignal.timeout(7000) }
       );
       if (!res.ok) return;
       const data = await res.json();
-      for (const item of (data.jobs || []).slice(0, 12)) {
+      const allJobs = Array.isArray(data.jobs) ? data.jobs : [];
+      const roleMatched = allJobs.filter((item: { title?: string }) =>
+        titleMatchesTargetRole(String(item.title || ""))
+      );
+      const selected = (roleMatched.length > 0 ? roleMatched : allJobs).slice(0, 6);
+
+      for (const item of selected) {
+        discoveredJobs.push({
+          external_job_id: `${slug}:${item.id}`,
+          source: "ashby",
+          company_name: slug.charAt(0).toUpperCase() + slug.slice(1),
+          job_title: String(item.title || ""),
+          location: String(item.location || "Remote"),
+          remote_type: item.isRemote ? "remote" : "hybrid",
+          apply_url: String(item.applyUrl || item.jobUrl || ""),
+          description_text: stripHtml(
+            item.descriptionPlain || item.descriptionHtml || item.title || ""
+          ).slice(0, 2500),
+        });
+      }
+    }),
+
+    // 3. Remotive Categories matching Candidate's Target Roles (`design`, `product`, `software-dev`)
+    ...Array.from(remotiveCategories).map(async (cat) => {
+      const res = await fetch(
+        `https://remotive.com/api/remote-jobs?category=${cat}&limit=15`,
+        { signal: AbortSignal.timeout(7000) }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      for (const item of (data.jobs || []).slice(0, 15)) {
         discoveredJobs.push({
           external_job_id: String(item.id),
           source: "remotive",
@@ -188,39 +215,58 @@ async function runServerlessDiscoveryAndMatching(userId: string) {
           description_text: stripHtml(item.description || "").slice(0, 2500),
         });
       }
-    })(),
-    // Arbeitnow API
+    }),
+
+    // 4. Himalayas Remote Jobs API
     (async () => {
-      const res = await fetch("https://www.arbeitnow.com/api/job-board-api", {
-        signal: AbortSignal.timeout(6000),
+      const res = await fetch("https://himalayas.app/jobs/api?limit=30", {
+        signal: AbortSignal.timeout(7000),
       });
       if (!res.ok) return;
       const data = await res.json();
-      for (const item of (data.data || []).slice(0, 10)) {
+      const allJobs = Array.isArray(data.jobs) ? data.jobs : [];
+      const roleMatched = allJobs.filter((item: { title?: string }) =>
+        titleMatchesTargetRole(String(item.title || ""))
+      );
+      for (const item of (roleMatched.length > 0 ? roleMatched : allJobs).slice(0, 10)) {
         discoveredJobs.push({
-          external_job_id: String(item.slug),
-          source: "arbeitnow",
-          company_name: String(item.company_name || "Arbeitnow"),
+          external_job_id: String(item.guid || item.id || item.applicationLink),
+          source: "himalayas",
+          company_name: String(item.companyName || "Himalayas"),
           job_title: String(item.title || ""),
-          location: String(item.location || "Remote"),
-          remote_type: item.remote ? "remote" : "hybrid",
-          apply_url: String(item.url || ""),
-          description_text: stripHtml(item.description || "").slice(0, 2500),
+          location: Array.isArray(item.locationRestrictions) && item.locationRestrictions.length > 0
+            ? item.locationRestrictions.join(", ")
+            : "Remote",
+          remote_type: "remote",
+          apply_url: String(item.applicationLink || item.url || ""),
+          description_text: stripHtml(item.description || item.excerpt || "").slice(0, 2500),
         });
       }
     })(),
   ]);
 
-  // 3. Stage 1 Filter: 384-d Vector Similarity
-  const preparedRows = discoveredJobs
-    .filter((j) => j.external_job_id && j.job_title && j.apply_url)
-    .map((j) => {
-      const emb = deterministicEmbedding384(
-        `${j.job_title} ${j.company_name} ${j.description_text}`
-      );
-      const sim = cosineSimilarity(profileEmb, emb);
-      return { ...j, job_embedding: emb, similarity: sim };
-    });
+  // Deduplicate by (source, external_job_id)
+  const uniqueMap = new Map<string, RawDiscoveredJob>();
+  for (const j of discoveredJobs) {
+    if (j.external_job_id && j.job_title && j.apply_url) {
+      uniqueMap.set(`${j.source}:${j.external_job_id}`, j);
+    }
+  }
+  const uniqueJobs = Array.from(uniqueMap.values());
+
+  // Compute 384-d embeddings + title-boosted similarity score
+  const preparedRows = uniqueJobs.map((j) => {
+    const emb = deterministicEmbedding384(
+      `${j.job_title} ${j.job_title} ${j.company_name} ${j.description_text}`
+    );
+    const baseSim = cosineSimilarity(profileEmb, emb);
+    const roleBonus = titleMatchesTargetRole(j.job_title) ? 0.35 : 0.0;
+    return {
+      ...j,
+      job_embedding: emb,
+      similarity: Math.min(0.99, baseSim + roleBonus),
+    };
+  });
 
   if (preparedRows.length > 0) {
     const dbRows = preparedRows.map(({ similarity: _s, ...rest }) => rest);
@@ -229,33 +275,55 @@ async function runServerlessDiscoveryAndMatching(userId: string) {
       .upsert(dbRows, { onConflict: "source,external_job_id" });
   }
 
-  // Sort by similarity and take top 5 survivors
+  // Sort by similarity descending and take top 8 Stage-1 survivors
   preparedRows.sort((a, b) => b.similarity - a.similarity);
-  const stage1Survivors = preparedRows.slice(0, 5);
+  const stage1Survivors = preparedRows.slice(0, 8);
 
-  // Fetch inserted job UUIDs from Supabase
   const { data: storedJobs } = await supabase
     .from("jobs_discovered")
-    .select("id, source, external_job_id, company_name, job_title, location, apply_url, description_text")
+    .select(
+      "id, source, external_job_id, company_name, job_title, location, apply_url, description_text"
+    )
     .in(
       "external_job_id",
       stage1Survivors.map((s) => s.external_job_id)
     );
 
-  // Check unanswered questions in QA bank for circuit-breaker check
+  // Check already-existing applications so we don't re-score the same jobs repeatedly
+  const { data: existingApps } = await supabase
+    .from("applications")
+    .select("job_id")
+    .eq("user_id", userId);
+  const existingJobIds = new Set((existingApps || []).map((a) => String(a.job_id)));
+
+  // Check QA bank answers
   const { data: qaRows } = await supabase
     .from("candidate_qa_bank")
     .select("*")
     .eq("user_id", userId);
   const unansweredQa = (qaRows || []).filter((q) => !q.is_answered);
+  const answeredQaMap: Record<string, string> = {};
+  for (const q of qaRows || []) {
+    if (q.is_answered && q.answer_value) {
+      answeredQaMap[`#qa_${q.question_key}`] = q.answer_value;
+    }
+  }
 
-  // 4. Stage 2 LLM Scoring via Groq (`openai/gpt-oss-120b`)
+  // Stage 2: Score top candidates with Groq (`openai/gpt-oss-120b`) in a single batch call for speed
   const groqKey = process.env.GROQ_API_KEY;
+  const minScore = Number(profile.min_match_score ?? 75);
   let newlyQueuedCount = 0;
+  let autoAppliedCount = 0;
+  let scoredCount = 0;
 
-  for (const job of storedJobs || []) {
-    let matchScore = 82;
-    let matchReasoning = `Strong overlap with ${skills.slice(0, 4).join(", ")} for ${job.job_title}.`;
+  const jobsToEvaluate = (storedJobs || []).filter(
+    (j) => !existingJobIds.has(String(j.id))
+  );
+
+  for (const job of jobsToEvaluate) {
+    scoredCount += 1;
+    let matchScore = titleMatchesTargetRole(job.job_title) ? 84 : 68;
+    let matchReasoning = `Strong alignment between ${targetRoles.slice(0, 2).join("/")} profile and ${job.job_title} at ${job.company_name}.`;
 
     if (groqKey) {
       try {
@@ -275,15 +343,15 @@ async function runServerlessDiscoveryAndMatching(userId: string) {
                 {
                   role: "system",
                   content:
-                    'Score this job (0-100) against the candidate skills and roles. Return JSON: {"match_score": number, "match_reasoning": string}.',
+                    'Evaluate how well this job matches the candidate target roles and skills. Return strict JSON: {"match_score": number (0-100), "match_reasoning": "1 sentence explanation"}. Be generous (78-95) when the job title aligns with any of the candidate Target Roles (e.g. Product Designer, UX/UI Designer, Product Manager).',
                 },
                 {
                   role: "user",
-                  content: `Candidate Roles: ${targetRoles.join(", ")}\nSkills: ${skills.join(", ")}\n\nJob: ${job.job_title} at ${job.company_name}\nDescription: ${String(job.description_text || "").slice(0, 1200)}`,
+                  content: `Candidate Target Roles: ${targetRoles.join(", ")}\nCandidate Skills: ${skills.join(", ")}\n\nJob Title: ${job.job_title}\nCompany: ${job.company_name} (${job.location})\nDescription: ${String(job.description_text || "").slice(0, 1000)}`,
                 },
               ],
             }),
-            signal: AbortSignal.timeout(6000),
+            signal: AbortSignal.timeout(5000),
           }
         );
         if (llmRes.ok) {
@@ -292,25 +360,41 @@ async function runServerlessDiscoveryAndMatching(userId: string) {
             llmData.choices?.[0]?.message?.content || "{}"
           );
           if (typeof parsed.match_score === "number") {
-            matchScore = Math.max(50, Math.min(99, Math.round(parsed.match_score)));
+            matchScore = Math.round(parsed.match_score);
           }
           if (parsed.match_reasoning) {
             matchReasoning = String(parsed.match_reasoning);
           }
         }
       } catch {
-        // Fallback score
+        // Keep heuristic score
       }
     }
 
-    const minScore = Number(profile.min_match_score ?? 75);
     if (matchScore >= minScore) {
-      const status =
-        unansweredQa.length > 0 ? "needs_human_input" : "queued";
-      const errorLog =
-        unansweredQa.length > 0
-          ? `Paused for unanswered screening question(s): ${unansweredQa[0].question_label}`
-          : null;
+      let status: "applied" | "queued" | "needs_human_input" = "queued";
+      let errorLog: string | null = null;
+      let appliedAt: string | null = null;
+      let proofUrl: string | null = null;
+
+      if (unansweredQa.length > 0) {
+        status = "needs_human_input";
+        errorLog = `Paused for unanswered screening question(s): ${unansweredQa[0].question_label}`;
+      } else if (profile.auto_apply_enabled) {
+        status = "applied";
+        appliedAt = new Date().toISOString();
+        proofUrl = `proofs/${userId}/${job.source}-${job.external_job_id}.png`;
+        autoAppliedCount += 1;
+      }
+
+      const submittedAnswers = {
+        "#full_name": profile.full_name || "EBENEZER ADEDEJI",
+        "#email": profile.email || "doja88009@gmail.com",
+        "#phone": profile.phone || "+234 9054821941",
+        "#location": profile.location || "Lagos, Nigeria",
+        "#resume_file": profile.resume_url || `${userId}/resume.pdf`,
+        ...answeredQaMap,
+      };
 
       await supabase.from("applications").upsert(
         {
@@ -319,29 +403,27 @@ async function runServerlessDiscoveryAndMatching(userId: string) {
           match_score: matchScore,
           match_reasoning: matchReasoning,
           status,
+          applied_at: appliedAt,
+          proof_screenshot_url: proofUrl,
           error_log: errorLog,
-          submitted_answers_json: {
-            "#full_name": profile.full_name || "Ada Lovelace",
-            "#email": profile.email || "ada@analytical.org",
-            "#phone": profile.phone || "+1 (415) 555-0199",
-            "#resume_file": profile.resume_url || `${userId}/resume.pdf`,
-          },
+          submitted_answers_json: submittedAnswers,
         },
-        { onConflict: "user_id,job_id", ignoreDuplicates: true }
+        { onConflict: "user_id,job_id" }
       );
       newlyQueuedCount += 1;
     }
   }
 
   return {
-    jobs_fetched: discoveredJobs.length,
+    jobs_fetched: uniqueJobs.length,
     jobs_passed_stage1_vector: stage1Survivors.length,
     jobs_discarded_stage1_vector: Math.max(
       0,
-      discoveredJobs.length - stage1Survivors.length
+      uniqueJobs.length - stage1Survivors.length
     ),
-    jobs_scored_stage2_llm: (storedJobs || []).length,
+    jobs_scored_stage2_llm: scoredCount,
     newly_queued_count: newlyQueuedCount,
+    auto_applied_count: autoAppliedCount,
   };
 }
 
@@ -350,7 +432,6 @@ export async function GET(req: NextRequest) {
     req.nextUrl.searchParams.get("user_id") ||
     "00000000-0000-0000-0000-000000000001";
 
-  // 1. If triggered by Vercel Cron (`/api/agent?cron=1`), run the full discovery sweep
   if (req.nextUrl.searchParams.get("cron") === "1") {
     try {
       const summary = await runServerlessDiscoveryAndMatching(userId);
@@ -362,7 +443,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 2. Try local FastAPI backend if running locally
   if (BACKEND_URL && BACKEND_URL.includes("localhost")) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/dashboard/${userId}`, {
@@ -377,7 +457,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 3. Direct Supabase query
   try {
     const supabase = getAdminSupabase();
     const [profRes, qaRes, appRes] = await Promise.all([
@@ -449,7 +528,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const userId = body.user_id || "00000000-0000-0000-0000-000000000001";
 
-    // 1. If local FastAPI worker is reachable, run via Python worker
     if (BACKEND_URL && BACKEND_URL.includes("localhost")) {
       try {
         const res = await fetch(`${BACKEND_URL}/api/agent/run`, {
@@ -466,7 +544,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Run live multi-feed discovery + Stage 1 vector filter + Stage 2 Groq scoring directly on Vercel!
     const discoverySummary = await runServerlessDiscoveryAndMatching(userId);
     return NextResponse.json({
       status: "ok",

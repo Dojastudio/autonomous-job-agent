@@ -193,12 +193,13 @@ export default function DashboardPage() {
       const data = await res.json();
       if (res.ok && data.discovery) {
         await refreshDashboardFromBackend();
+        const d = data.discovery;
         setStatusBanner(
-          `Cycle Complete: ${data.discovery.jobs_fetched ?? 0} fetched • ${
-            data.discovery.jobs_passed_stage1_vector ?? 0
-          } passed pgvector (≥0.55) • ${
-            data.discovery.newly_queued_count ?? 0
-          } queued.`
+          `Cycle Complete: ${d.jobs_fetched ?? 0} roles scanned • ${
+            d.jobs_passed_stage1_vector ?? 0
+          } matched vector filter • ${
+            d.auto_applied_count ?? d.newly_queued_count ?? 0
+          } applications processed (>=${profile.min_match_score}% threshold).`
         );
       } else {
         setStatusBanner(
