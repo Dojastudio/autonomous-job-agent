@@ -130,7 +130,7 @@ export default function AgentControlBar({
               />
             </span>
             <span>
-              {autoApplyEnabled ? "Auto-Apply Active" : "Auto-Apply Paused"}
+              {autoApplyEnabled ? "Auto-Apply Enabled" : "Auto-Apply Off"}
             </span>
             <span
               className={`ml-1 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${
@@ -229,12 +229,12 @@ export default function AgentControlBar({
             {isRunningCycle ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                <span>Search in progress…</span>
+                <span>{autoApplyEnabled ? "Search and apply in progress…" : "Search in progress…"}</span>
               </>
             ) : (
               <>
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Start job search</span>
+                <span>{autoApplyEnabled ? "Search and apply" : "Start job search"}</span>
               </>
             )}
           </button>

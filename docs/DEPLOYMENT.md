@@ -15,7 +15,7 @@ Test ownership with two staging accounts: account A must not see or update B thr
 
 Deploy the API and persistent worker from the same source and environment. The API has no background scheduler. Do not enable the archived GitHub Actions schedule or a Vercel cron. The worker is the only scheduler. `docker compose up --build` defines three services; the frontend image receives only public Supabase configuration and the backend URL, not service-role or model-provider keys.
 
-The live VPS uses `deploy/compose.vps.yml` with bounded CPU, memory, and logs. It proxies `/job-aid/` through `deploy/nginx-job-aid.conf` on `resolver.doxad.cloud`. The corresponding Vercel server-only `BACKEND_URL` is `https://resolver.doxad.cloud/job-aid`. VPS `.env` must remain mode `0600`. The worker has `WORKER_SCHEDULE_ENABLED=false` and `WORKER_AUTO_APPLY_ENABLED=false` until activation is explicitly authorized. The frontend's Start job search action queues discovery only.
+The live VPS uses `deploy/compose.vps.yml` with bounded CPU, memory, and logs. It proxies `/job-aid/` through `deploy/nginx-job-aid.conf` on `resolver.doxad.cloud`. The corresponding Vercel server-only `BACKEND_URL` is `https://resolver.doxad.cloud/job-aid`. VPS `.env` must remain mode `0600`. The worker has `WORKER_SCHEDULE_ENABLED=false`; `WORKER_AUTO_APPLY_ENABLED=true` allows only manually requested submission runs. The frontend action labels those runs Search and apply when the candidate has enabled Auto-Apply. With the preference off, the action queues discovery only.
 
 For Vercel, configure public Supabase values and server-only `BACKEND_URL` pointing to the HTTPS API. The Next.js API proxies do not require Supabase administrative credentials. CV processing can take up to 120 seconds; choose hosting that supports that request duration. Discovery and application execution run outside HTTP request lifetimes. Configure Supabase Auth site/redirect URLs and email confirmation for the actual deployment domain.
 
@@ -57,12 +57,12 @@ Code and local tests do not establish production readiness. Apply migrations, va
 
 ## Submission activation
 
-`WORKER_AUTO_APPLY_ENABLED` defaults to `false`. In this mode the worker can
-process discovery runs, but rejects runs requesting employer submissions before
-claiming applications or opening a browser. Scheduled runs request discovery
-only. After staging acceptance and review of existing enabled profiles, set this
-variable to `true` on the worker and restart it to activate submissions. Candidate
-preferences and existing application records are preserved by this switch.
+`WORKER_AUTO_APPLY_ENABLED` defaults to `false` in the general configuration.
+The live worker sets it to `true`, allowing submissions only when the candidate
+has enabled Auto-Apply and explicitly clicks Search and apply. Background
+scheduling remains disabled. If this setting is later turned off on the worker,
+submission runs fail before claiming applications or opening a browser.
+Candidate preferences and existing application records are preserved.
 
 ## Target discovery (2026-11-17)
 

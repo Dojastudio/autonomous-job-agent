@@ -17,7 +17,7 @@ Open http://localhost:3000 and create/sign into an account. Confirm the signup e
 
 ## Execution and evidence
 
-A search creates a durable `agent_runs` row and returns immediately. The worker is the only scheduler; it queues eligible automatic searches every four hours. One active run is allowed per candidate. Atomic database functions claim runs and applications. Daily limits count attempts, including failed and interrupted attempts, conservatively preventing repeat submissions.
+A search creates a durable `agent_runs` row and returns immediately. The worker can schedule eligible searches every four hours when `WORKER_SCHEDULE_ENABLED=true`; the live deployment has scheduling disabled. One active run is allowed per candidate. Atomic database functions claim runs and applications. Daily limits count attempts, including failed and interrupted attempts, conservatively preventing repeat submissions.
 
 Only a new explicit confirmation after Submit can produce `applied`. Screenshots must upload successfully and the confirmation must persist. Unclear click outcomes, missing confirmation, and interrupted attempts become `submission_uncertain`; they never automatically retry. Existing historical `applied` records without confirmation remain preserved and are flagged for review.
 

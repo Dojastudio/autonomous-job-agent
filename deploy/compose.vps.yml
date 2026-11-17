@@ -31,7 +31,7 @@ services:
       OMP_NUM_THREADS: '1'
       TOKENIZERS_PARALLELISM: 'false'
       HF_HOME: /model-cache
-      WORKER_AUTO_APPLY_ENABLED: 'false'
+      WORKER_AUTO_APPLY_ENABLED: 'true'
       WORKER_SCHEDULE_ENABLED: 'false'
     volumes:
       - model-cache:/model-cache

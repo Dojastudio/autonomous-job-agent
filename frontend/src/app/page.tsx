@@ -160,7 +160,7 @@ function DashboardPage({ userId }: { userId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           run_discovery: true,
-          run_auto_apply: false,
+          run_auto_apply: profile.auto_apply_enabled,
         }),
       });
       setRun((await res.json()).run);
