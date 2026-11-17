@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api";
 
 import React, { useState } from "react";
 import {
@@ -26,7 +27,7 @@ interface OnboardingCardProps {
     gap_questions: QABankItem[];
   }) => void;
   onSaveAnswers: (
-    answers: Array<{ question_key: string; answer_value: string }>
+    answers: Array<{ question_key: string; answer_value: string }>,
   ) => Promise<void>;
 }
 
@@ -61,7 +62,7 @@ export default function OnboardingCard({
       formData.append("user_id", userId);
       formData.append("file", file);
 
-      const res = await fetch("/api/cv", {
+      const res = await apiFetch("/api/cv", {
         method: "POST",
         body: formData,
       });
@@ -101,6 +102,8 @@ export default function OnboardingCard({
       await onSaveAnswers(payload);
       setDraftAnswers({});
       setEditingKey(null);
+    } catch {
+      // Parent displays the save failure; preserve the draft for retry.
     } finally {
       setIsSavingQA(false);
     }
@@ -118,11 +121,11 @@ export default function OnboardingCard({
               </div>
               <div>
                 <h2 className="text-sm font-semibold text-zinc-100">
-                  Candidate CV &amp; Vector Profile
+                  Your CV and profile
                 </h2>
                 <p className="text-[11px] text-zinc-400 flex items-center gap-1">
                   <Lock className="w-3 h-3 text-emerald-400" />
-                  PII stripped locally before LLM calls
+                  Review extracted details before applying
                 </p>
               </div>
             </div>
@@ -130,7 +133,7 @@ export default function OnboardingCard({
             {profile?.full_name && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <CheckCircle2 className="w-3 h-3" />
-                384-d Indexed
+                CV saved
               </span>
             )}
           </div>
@@ -178,7 +181,7 @@ export default function OnboardingCard({
                     : "Drop PDF Resume or click to replace"}
                 </p>
                 <p className="text-[11px] text-zinc-500">
-                  PyMuPDF + Gemini 3.5 Flash-Lite structured parser
+                  Upload a text-based PDF, up to 10 MB
                 </p>
               </div>
             </div>
@@ -225,7 +228,7 @@ export default function OnboardingCard({
 
               <div>
                 <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1.5">
-                  <span className="font-medium">Indexed Skills</span>
+                  <span className="font-medium">Skills</span>
                   <span className="font-mono text-zinc-500">
                     {parsedCv.skills?.length || 0} skills
                   </span>
@@ -266,12 +269,12 @@ export default function OnboardingCard({
               </div>
               <div>
                 <h2 className="text-sm font-semibold text-zinc-100">
-                  Screening Q&amp;A Memory Bank
+                  Screening questions
                 </h2>
                 <p className="text-[11px] text-zinc-400">
                   {pendingQuestions.length > 0
-                    ? `${pendingQuestions.length} required answer(s) missing — Playwright pauses unknown questions automatically`
-                    : "All screening questions answered — Groq 120B form mapper ready"}
+                    ? `${pendingQuestions.length} required answer(s) missing — applications pause when an answer is needed`
+                    : "No unanswered screening questions"}
                 </p>
               </div>
             </div>
@@ -284,7 +287,7 @@ export default function OnboardingCard({
                     : "bg-emerald-500/10 text-emerald-300 border-emerald-500/25"
                 }`}
               >
-                {answeredQuestions.length}/{qaBank.length} Verified
+                {answeredQuestions.length}/{qaBank.length} Saved
               </span>
             </div>
           </div>
@@ -328,7 +331,9 @@ export default function OnboardingCard({
               <div className="flex items-center justify-between pt-1">
                 <span className="text-[11px] text-zinc-400">
                   Saving automatically re-queues any{" "}
-                  <span className="text-amber-300 font-medium">Needs Input</span>{" "}
+                  <span className="text-amber-300 font-medium">
+                    Needs Input
+                  </span>{" "}
                   applications.
                 </span>
                 <button
@@ -341,7 +346,7 @@ export default function OnboardingCard({
                   ) : (
                     <Send className="w-3.5 h-3.5" />
                   )}
-                  Save Verified Answers
+                  Save Saved Answers
                 </button>
               </div>
             </form>
@@ -349,7 +354,13 @@ export default function OnboardingCard({
 
           {/* Answered Questions Section (Collapsible when pending exist, or always visible when all answered) */}
           {answeredQuestions.length > 0 && (
-            <div className={pendingQuestions.length > 0 ? "mt-4 pt-3 border-t border-zinc-800/70" : ""}>
+            <div
+              className={
+                pendingQuestions.length > 0
+                  ? "mt-4 pt-3 border-t border-zinc-800/70"
+                  : ""
+              }
+            >
               {pendingQuestions.length > 0 && (
                 <button
                   type="button"
@@ -416,10 +427,14 @@ export default function OnboardingCard({
                             <button
                               type="button"
                               onClick={async () => {
-                                const val = draftAnswers[q.question_key]?.trim();
+                                const val =
+                                  draftAnswers[q.question_key]?.trim();
                                 if (val) {
                                   await onSaveAnswers([
-                                    { question_key: q.question_key, answer_value: val },
+                                    {
+                                      question_key: q.question_key,
+                                      answer_value: val,
+                                    },
                                   ]);
                                 }
                                 setEditingKey(null);

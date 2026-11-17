@@ -249,119 +249,18 @@ class ProviderEndpoint:
     api_key_attr: str = ""
 
 
-TASK_ROUTES: Dict[str, List[ProviderEndpoint]] = {
-    # High-Context Parsing & Scoring
-    "cv_parser": [
-        ProviderEndpoint(
-            provider="gemini",
-            model="gemini-3.5-flash-lite",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key_attr="GEMINI_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="groq",
-            model="openai/gpt-oss-120b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="groq",
-            model="qwen/qwen3.8-27b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="openrouter",
-            model="meta-llama/llama-3.3-70b-instruct:free",
-            base_url="https://openrouter.ai/api/v1",
-            api_key_attr="OPENROUTER_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="cerebras",
-            model="llama-3.3-70b",
-            base_url="https://api.cerebras.ai/v1",
-            api_key_attr="CEREBRAS_API_KEY",
-        ),
-    ],
-    "job_scorer": [
-        ProviderEndpoint(
-            provider="gemini",
-            model="gemini-3.5-flash-lite",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key_attr="GEMINI_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="groq",
-            model="openai/gpt-oss-120b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="groq",
-            model="qwen/qwen3.8-27b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="openrouter",
-            model="meta-llama/llama-3.3-70b-instruct:free",
-            base_url="https://openrouter.ai/api/v1",
-            api_key_attr="OPENROUTER_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="cerebras",
-            model="llama-3.3-70b",
-            base_url="https://api.cerebras.ai/v1",
-            api_key_attr="CEREBRAS_API_KEY",
-        ),
-    ],
-    # Low-Latency Form Mapping & Screening Q&A
-    "form_mapper": [
-        ProviderEndpoint(
-            provider="groq",
-            model="openai/gpt-oss-120b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="groq",
-            model="qwen/qwen3.8-27b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="cerebras",
-            model="llama-3.3-70b",
-            base_url="https://api.cerebras.ai/v1",
-            api_key_attr="CEREBRAS_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="gemini",
-            model="gemini-3.5-flash-lite",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key_attr="GEMINI_API_KEY",
-        ),
-    ],
-    "question_answerer": [
-        ProviderEndpoint(
-            provider="groq",
-            model="openai/gpt-oss-120b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key_attr="GROQ_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="cerebras",
-            model="llama-3.3-70b",
-            base_url="https://api.cerebras.ai/v1",
-            api_key_attr="CEREBRAS_API_KEY",
-        ),
-        ProviderEndpoint(
-            provider="gemini",
-            model="gemini-3.5-flash-lite",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key_attr="GEMINI_API_KEY",
-        ),
-    ],
+_GEMINI = ProviderEndpoint('gemini',settings.GEMINI_MODEL,'https://generativelanguage.googleapis.com/v1beta/openai/','GEMINI_API_KEY')
+_GROQ = ProviderEndpoint('groq',settings.GROQ_MODEL,'https://api.groq.com/openai/v1','GROQ_API_KEY')
+_OPTIONAL = []
+if settings.OPENROUTER_MODEL:
+    _OPTIONAL.append(ProviderEndpoint('openrouter',settings.OPENROUTER_MODEL,'https://openrouter.ai/api/v1','OPENROUTER_API_KEY'))
+if settings.CEREBRAS_MODEL:
+    _OPTIONAL.append(ProviderEndpoint('cerebras',settings.CEREBRAS_MODEL,'https://api.cerebras.ai/v1','CEREBRAS_API_KEY'))
+TASK_ROUTES = {
+    'cv_parser': [_GEMINI,_GROQ]+_OPTIONAL,
+    'job_scorer': [_GEMINI,_GROQ]+_OPTIONAL,
+    'form_mapper': [_GROQ,_GEMINI]+_OPTIONAL,
+    'question_answerer': [_GROQ,_GEMINI]+_OPTIONAL,
 }
 
 
@@ -613,34 +512,24 @@ class ModelRouter:
     # 5. 384-DIM SEMANTIC EMBEDDINGS (`all-MiniLM-L6-v2` / Deterministic Fallback)
     # ==========================================================================
 
+    @property
+    def embedding_version(self) -> str:
+        if settings.EMBEDDING_PROVIDER == 'hash':
+            return 'sha256-unigram-bigram-384-v1'
+        return f'sentence-transformers:{settings.EMBEDDING_MODEL_NAME}:384-v1'
+
     def embed_text(self, text: str) -> List[float]:
-        """
-        Generates a normalized 384-dimensional vector embedding for semantic matching.
-        Uses local `sentence-transformers` (`all-MiniLM-L6-v2`) when loaded, and
-        falls back to a fast, deterministic 384-d token-hash projection if offline
-        or if model weights are not cached locally.
-        """
-        clean_text = (text or "").strip()
-        if not clean_text:
-            return [0.0] * 384
-
-        if settings.EMBEDDING_PROVIDER == "local":
-            try:
-                if self._local_embedder is None:
-                    from sentence_transformers import SentenceTransformer
-
-                    self._local_embedder = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
-                vec = self._local_embedder.encode(clean_text, normalize_embeddings=True)
-                vec_list = [float(x) for x in vec.tolist()]
-                return self._normalize_and_fit_dim(vec_list, target_dim=384)
-            except Exception as exc:
-                logger.warning(
-                    "[ModelRouter] Local sentence-transformers unavailable (%s); using deterministic 384-d token hash embedding.",
-                    exc,
-                )
-                return self.deterministic_hash_embedding(clean_text, dim=384)
-
-        return self.deterministic_hash_embedding(clean_text, dim=384)
+        if settings.EMBEDDING_PROVIDER == 'hash':
+            return self.deterministic_hash_embedding(text, dim=384)
+        if settings.EMBEDDING_PROVIDER != 'local':
+            raise ModelRouterError('EMBEDDING_PROVIDER must be local or hash.')
+        if self._local_embedder is None:
+            from sentence_transformers import SentenceTransformer
+            self._local_embedder = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
+        vec = self._local_embedder.encode(text, normalize_embeddings=True)
+        if len(vec) != 384:
+            raise ModelRouterError('Embedding model must produce 384 dimensions.')
+        return [float(x) for x in vec.tolist()]
 
     @staticmethod
     def deterministic_hash_embedding(text: str, dim: int = 384) -> List[float]:

@@ -34,3 +34,4 @@ tmp/
 .vscode/
 .vercel/
 supabase/.temp/
+*.tsbuildinfo

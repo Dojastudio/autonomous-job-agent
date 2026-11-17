@@ -1,23 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl =
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder-project.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  "https://placeholder-project.supabase.co";
 const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-export const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-
-// Default demo user UUID when running locally before auth session
-export const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 export type ApplicationStatus =
   | "queued"
   | "applying"
   | "applied"
   | "needs_human_input"
+  | "submission_uncertain"
   | "failed"
   | "interview"
   | "rejected";
@@ -84,6 +80,8 @@ export interface ApplicationRecord {
   tailored_cover_letter: string | null;
   submitted_answers_json: Record<string, string>;
   proof_screenshot_url: string | null;
+  evidence_review_required?: boolean;
+  confirmation?: { text: string; url: string; confirmed_at?: string } | null;
   error_log: string | null;
   applied_at: string | null;
   created_at: string;

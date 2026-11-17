@@ -14,7 +14,7 @@ import unittest
 from typing import Any, Dict, List, Optional
 
 from backend.core.model_router import ModelRouter, ProviderEndpoint
-from backend.worker.auto_applier import AutoApplierWorker
+from backend.worker.auto_applier import AutoApplierWorker, SubmissionEvidence
 
 
 class MockBrowserDriver:
@@ -36,7 +36,7 @@ class MockBrowserDriver:
         self.submitted_values = dict(field_values)
         self.submit_clicked = True
         # Return valid 1x1 PNG header bytes as confirmation screenshot
-        return b"\x89PNG\r\n\x1a\nMOCK_CONFIRMATION_SCREENSHOT"
+        return SubmissionEvidence(b"PNG", {"text":"application received","url":"https://example.test/confirmed"})
 
     async def close(self) -> None:
         self.closed = True
@@ -182,7 +182,8 @@ class TestAutoApplierWorker(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(driver.submitted_values["#email"], "margaret@apollo.mit.edu")
         self.assertEqual(driver.submitted_values["#phone"], "+1 (617) 555-1969")
         self.assertEqual(driver.submitted_values["#work_auth"], "Yes")
-        self.assertIsNotNone(result.proof_screenshot_url)
+        self.assertIsNone(result.proof_screenshot_url)
+        self.assertIsNotNone(result.confirmation)
 
     async def test_needs_human_input_circuit_breaker_aborts_submission_cleanly(self) -> None:
         # Add an unknown custom screening question to the DOM schema

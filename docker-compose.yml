@@ -1,33 +1,30 @@
-version: "3.9"
-
 services:
-  backend-worker:
+  backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: autonomous-job-agent-backend
-    env_file:
-      - .env
-    environment:
-      - BACKEND_HOST=0.0.0.0
-      - BACKEND_PORT=8000
-      - PLAYWRIGHT_HEADLESS=true
+    env_file: .env
     ports:
-      - "8000:8000"
-    shm_size: "2gb"
+      - '127.0.0.1:8000:8000'
     restart: unless-stopped
-
-  frontend-dashboard:
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: python -m backend.worker.run_sweep
+    env_file: .env
+    shm_size: '2gb'
+    restart: unless-stopped
+  frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: autonomous-job-agent-frontend
-    env_file:
-      - .env
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     environment:
-      - NEXT_PUBLIC_BACKEND_URL=http://backend-worker:8000
+      BACKEND_URL: http://backend:8000
     ports:
-      - "3000:3000"
+      - '127.0.0.1:3000:3000'
     depends_on:
-      - backend-worker
+      - backend
     restart: unless-stopped

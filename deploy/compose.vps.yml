@@ -1,0 +1,49 @@
+services:
+  api:
+    image: job-aid-backend:release
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    env_file: ../.env
+    environment:
+      OMP_NUM_THREADS: '1'
+      TOKENIZERS_PARALLELISM: 'false'
+      HF_HOME: /model-cache
+      WORKER_AUTO_APPLY_ENABLED: 'false'
+    volumes:
+      - model-cache:/model-cache
+    ports:
+      - '127.0.0.1:8015:8000'
+    mem_limit: 640m
+    cpus: 0.5
+    pids_limit: 128
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  worker:
+    image: job-aid-backend:release
+    command: python -m backend.worker.run_sweep
+    env_file: ../.env
+    environment:
+      OMP_NUM_THREADS: '1'
+      TOKENIZERS_PARALLELISM: 'false'
+      HF_HOME: /model-cache
+      WORKER_AUTO_APPLY_ENABLED: 'false'
+      WORKER_SCHEDULE_ENABLED: 'false'
+    volumes:
+      - model-cache:/model-cache
+    shm_size: 128m
+    mem_limit: 768m
+    cpus: 0.5
+    pids_limit: 256
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  model-cache:

@@ -39,12 +39,18 @@ class Settings(BaseSettings):  # type: ignore
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     CEREBRAS_API_KEY: str = os.getenv("CEREBRAS_API_KEY", "")
 
+    GEMINI_MODEL: str = 'gemini-2.5-flash-lite'
+    GROQ_MODEL: str = 'openai/gpt-oss-120b'
+    OPENROUTER_MODEL: str = ''
+    CEREBRAS_MODEL: str = ''
     # Embeddings
     EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
     EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "384"))
 
     # Worker & Scheduler
+    WORKER_AUTO_APPLY_ENABLED: bool = False
+    WORKER_SCHEDULE_ENABLED: bool = False
     BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0")
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     PLAYWRIGHT_HEADLESS: bool = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() == "true"
@@ -86,4 +92,3 @@ class Settings(BaseSettings):  # type: ignore
 
 
 settings = Settings()
-

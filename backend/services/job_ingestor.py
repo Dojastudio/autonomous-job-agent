@@ -14,10 +14,12 @@ Workflow B (Part 2): Two-Stage Job Matching & Ingestion Pipeline.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.core.config import settings
 from backend.core.database import get_supabase_client
@@ -31,6 +33,8 @@ class LLMJobScoreSchema(BaseModel):
     match_score: int
     match_reasoning: str
     tailored_cover_letter: Optional[str] = None
+    eligible: Optional[bool] = None
+    eligibility_reason: Optional[str] = None
 
 
 @dataclass
@@ -46,7 +50,10 @@ JOB_SCORER_SYSTEM_PROMPT = """You are a strict, objective technical hiring evalu
 Compare the anonymized candidate profile (target roles, skills, experience years, location preference)
 against the job posting (title, company, location, remote_type, description).
 
+Separate explicit eligibility restrictions from preferences. Do not infer citizenship or work authorization from residence. If the posting explicitly excludes the candidate based on provided answers, set eligible=false. If evidence is insufficient, use null and explain what needs verification. Target locations are preferences unless the candidate explicitly states a restriction.
 Return ONLY a valid JSON object with:
+- "eligible": true, false, or null
+- "eligibility_reason": concise explanation
 - "match_score": integer from 0 to 100 representing true alignment across role seniority, required hard skills, and location/remote compatibility.
 - "match_reasoning": concise 1-2 sentence explanation of why the candidate scored this rating (highlighting matching skills and any gaps).
 - "tailored_cover_letter": concise 2-paragraph cover letter tailored to the company and role using placeholder {{CANDIDATE_NAME}} for sign-off."""
@@ -85,6 +92,7 @@ class JobIngestorService:
             row = job.to_dict()
             row["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{job.source}:{job.external_job_id}"))
             row["job_embedding"] = embedding
+            row["embedding_version"] = self.router.embedding_version
             prepared.append(row)
         return prepared
 
@@ -110,6 +118,8 @@ class JobIngestorService:
                 continue
 
             job_emb = job.get("job_embedding")
+            if isinstance(job_emb,str):
+                job_emb = json.loads(job_emb)
             if not job_emb:
                 discarded += 1
                 continue
@@ -143,18 +153,22 @@ class JobIngestorService:
         if not discovered_jobs:
             return summary
 
-        job_rows = self.embed_and_prepare_jobs(discovered_jobs)
+        job_rows = await asyncio.to_thread(self.embed_and_prepare_jobs, discovered_jobs)
 
         if persist_to_supabase:
-            self._upsert_discovered_jobs_to_supabase(job_rows)
+            job_rows = self._upsert_discovered_jobs_to_supabase(job_rows)
 
         profile_embedding = candidate_profile.get("profile_embedding")
-        if not profile_embedding:
+        if not profile_embedding or candidate_profile.get('embedding_version') != self.router.embedding_version:
             parsed_cv = candidate_profile.get("parsed_cv_json") or {}
             fallback_text = " ".join(
                 parsed_cv.get("target_roles", []) + parsed_cv.get("skills", [])
             )
-            profile_embedding = self.router.embed_text(fallback_text)
+            profile_embedding = await asyncio.to_thread(self.router.embed_text, fallback_text)
+            if persist_to_supabase:
+                get_supabase_client().table('candidate_profiles').update({'profile_embedding':profile_embedding,'embedding_version':self.router.embedding_version}).eq('id',candidate_profile['id']).execute()
+        if isinstance(profile_embedding,str):
+            profile_embedding = json.loads(profile_embedding)
 
         surviving_jobs, discarded_count = self.filter_stage1_vector_similarity(
             profile_embedding=profile_embedding,
@@ -175,6 +189,9 @@ class JobIngestorService:
             street_address=candidate_profile.get("location"),
         )
 
+        qa_context = []
+        if persist_to_supabase:
+            qa_context = get_supabase_client().table('candidate_qa_bank').select('question_label,answer_value').eq('user_id',user_id).eq('is_answered',True).execute().data
         # Stage 2: Call LLM scorer only for jobs that survived the 0.55 cosine threshold
         for job in surviving_jobs:
             summary.jobs_scored_stage2_llm += 1
@@ -183,7 +200,8 @@ class JobIngestorService:
                 f"- Target Roles: {parsed_cv.get('target_roles', [])}\n"
                 f"- Hard Skills: {parsed_cv.get('skills', [])}\n"
                 f"- Experience Years: {parsed_cv.get('experience_years', 0)}\n"
-                f"- Preferred Location: {candidate_profile.get('location', 'Remote')}\n\n"
+                f"- Target Locations: {parsed_cv.get('target_locations', [])}\n\n"
+                f"- Verified Screening Answers: {qa_context}\n"
                 f"JOB POSTING:\n"
                 f"- Title: {job['job_title']}\n"
                 f"- Company: {job['company_name']}\n"
@@ -201,6 +219,8 @@ class JobIngestorService:
                 reinject_pii_in_output=True,
             )
 
+            if score_resp.eligible is False:
+                continue
             match_score = max(0, min(100, int(score_resp.match_score)))
             if match_score >= min_match_score:
                 app_row = {
@@ -220,19 +240,20 @@ class JobIngestorService:
         return summary
 
     @staticmethod
-    def _upsert_discovered_jobs_to_supabase(job_rows: List[Dict[str, Any]]) -> None:
+    def _upsert_discovered_jobs_to_supabase(job_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         try:
             supabase = get_supabase_client()
             clean_rows = [
-                {k: v for k, v in row.items() if k != "similarity"}
+                {k: v for k, v in row.items() if k not in ("similarity", "id")}
                 for row in job_rows
             ]
-            supabase.table("jobs_discovered").upsert(
+            result = supabase.table("jobs_discovered").upsert(
                 clean_rows,
                 on_conflict="source,external_job_id",
             ).execute()
-        except Exception as exc:
-            logger.warning("[JobIngestor] Supabase jobs_discovered upsert skipped/failed: %s", exc)
+            return result.data
+        except Exception:
+            raise
 
     @staticmethod
     def _queue_application_in_supabase(app_row: Dict[str, Any]) -> None:
@@ -244,4 +265,4 @@ class JobIngestorService:
                 ignore_duplicates=True,
             ).execute()
         except Exception as exc:
-            logger.warning("[JobIngestor] Supabase application queue insert skipped/failed: %s", exc)
+            raise

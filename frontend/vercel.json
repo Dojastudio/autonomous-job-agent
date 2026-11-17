@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/agent?cron=1",
-      "schedule": "0 8 * * *"
-    }
-  ]
-}
+{}

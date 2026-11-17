@@ -111,6 +111,16 @@ DOM_FORM_EXTRACTOR_JS = """
 """
 
 
+class SubmissionUncertain(RuntimeError):
+    """Submission may have happened; automatic retries are forbidden."""
+
+
+@dataclass
+class SubmissionEvidence:
+    screenshot: bytes
+    confirmation: Dict[str, Any]
+
+
 @dataclass
 class AutoApplyResult:
     application_id: str
@@ -119,6 +129,7 @@ class AutoApplyResult:
     needs_human_input_questions: List[Dict[str, str]] = field(default_factory=list)
     proof_screenshot_url: Optional[str] = None
     error_log: Optional[str] = None
+    confirmation: Optional[Dict[str, Any]] = None
 
 
 class BrowserDriverProtocol(Protocol):
@@ -134,7 +145,7 @@ class BrowserDriverProtocol(Protocol):
         form_fields_schema: List[Dict[str, Any]],
         field_values: Dict[str, Any],
         resume_pdf_path: Optional[str] = None,
-    ) -> bytes: ...
+    ) -> SubmissionEvidence: ...
 
     async def close(self) -> None: ...
 
@@ -209,7 +220,7 @@ class PlaywrightStealthDriver:
         form_fields_schema: List[Dict[str, Any]],
         field_values: Dict[str, Any],
         resume_pdf_path: Optional[str] = None,
-    ) -> bytes:
+    ) -> SubmissionEvidence:
         if self._page is None:
             raise RuntimeError("Page is not initialized. Call open_and_extract_schema first.")
 
@@ -218,7 +229,9 @@ class PlaywrightStealthDriver:
         }
 
         for selector, value in field_values.items():
-            meta = field_meta_by_selector.get(selector, {})
+            if selector not in field_meta_by_selector:
+                raise ValueError('Model mapped an unknown form selector.')
+            meta = field_meta_by_selector[selector]
             field_type = str(meta.get("type", "text")).lower()
             tag = str(meta.get("tag", "input")).lower()
 
@@ -227,6 +240,8 @@ class PlaywrightStealthDriver:
             if field_type == "file":
                 if resume_pdf_path and Path(resume_pdf_path).is_file():
                     await locator.set_input_files(resume_pdf_path)
+                elif meta.get('required'):
+                    raise ValueError('Required resume file is unavailable.')
                 continue
 
             if value is None or value == "":
@@ -252,36 +267,38 @@ class PlaywrightStealthDriver:
             'button:has-text("Submit")',
             'button:has-text("Apply")',
         ]
+        # Do not accept a confirmation that already existed before clicking.
+        confirmation_js = """() => {
+            const lines = document.body.innerText.toLowerCase().split('\\n').map(line => line.trim());
+            const positive = /^(?:your )?application (?:has been )?(?:successfully )?(?:submitted|received)[.!]?$/;
+            return lines.find(line => positive.test(line) || /^we have received your application(?:[ .!]|$)/.test(line)) || null;
+        }"""
+        if await self._page.evaluate(confirmation_js):
+            raise SubmissionUncertain('A confirmation was already visible before submission.')
         clicked = False
         for sub_sel in submit_selectors:
             loc = self._page.locator(sub_sel).first
             if await loc.count() > 0 and await loc.is_visible():
-                await loc.click()
+                try:
+                    await loc.click()
+                except Exception as exc:
+                    raise SubmissionUncertain('Submit click outcome is unknown.') from exc
                 clicked = True
                 break
 
         if not clicked:
             raise RuntimeError("Could not locate a visible Submit button on the application form.")
 
-        # Wait for confirmation text or URL change
         try:
-            await self._page.wait_for_function(
-                """() => {
-                    const body = (document.body && document.body.innerText || '').toLowerCase();
-                    return body.includes('thank you') ||
-                           body.includes('application submitted') ||
-                           body.includes('application received') ||
-                           body.includes('we have received your application') ||
-                           window.location.href.includes('confirmation') ||
-                           window.location.href.includes('thank');
-                }""",
-                timeout=12000,
-            )
-        except Exception:
-            await self._page.wait_for_timeout(2500)
-
-        screenshot_bytes: bytes = await self._page.screenshot(full_page=True, type="png")
-        return screenshot_bytes
+            await self._page.wait_for_function(confirmation_js, timeout=12000)
+            phrase = await self._page.evaluate(confirmation_js)
+            screenshot = await self._page.screenshot(full_page=True, type="png")
+            return SubmissionEvidence(screenshot, {
+                "url": self._page.url, "text": phrase,
+                "confirmed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            })
+        except Exception as exc:
+            raise SubmissionUncertain('Submission confirmation could not be established. Review before retrying.') from exc
 
     async def close(self) -> None:
         try:
@@ -452,18 +469,21 @@ class AutoApplierWorker:
             reinjected_fields: Dict[str, Any] = redactor.reinject_data(raw_mapped_fields)
 
             # 5. Deterministically fill DOM inputs, upload PDF resume, click Submit, & capture proof screenshot
-            screenshot_bytes = await driver.fill_and_submit(
+            evidence = await driver.fill_and_submit(
                 form_fields_schema=form_fields_schema,
                 field_values=reinjected_fields,
                 resume_pdf_path=resume_pdf_path,
             )
 
-            proof_url = f"proofs/{user_id}/{app_id}.png"
+            if not isinstance(evidence, SubmissionEvidence) or not evidence.confirmation.get('text'):
+                raise SubmissionUncertain('Driver returned no explicit submission confirmation.')
+            proof_url = None
             if persist_to_supabase:
                 proof_url = self._upload_proof_and_mark_applied(
                     user_id=user_id,
                     app_id=app_id,
-                    screenshot_bytes=screenshot_bytes,
+                    screenshot_bytes=evidence.screenshot,
+                    confirmation=evidence.confirmation,
                     submitted_answers_json=reinjected_fields,
                 )
 
@@ -472,8 +492,13 @@ class AutoApplierWorker:
                 status="applied",
                 submitted_answers_json=reinjected_fields,
                 proof_screenshot_url=proof_url,
+                confirmation=evidence.confirmation,
             )
 
+        except SubmissionUncertain as exc:
+            if persist_to_supabase:
+                self._update_application_status(app_id, 'submission_uncertain', str(exc))
+            return AutoApplyResult(app_id, 'submission_uncertain', error_log=str(exc))
         except Exception as exc:
             logger.error("[AutoApplier] Application %s failed: %s", app_id, exc)
             if persist_to_supabase:
@@ -536,17 +561,19 @@ class AutoApplierWorker:
             supabase.table("applications").update(
                 {
                     "status": "needs_human_input",
+                    "required_question_keys": [q["question_key"] for q in new_qa_entries],
                     "error_log": f"Paused for unanswered screening question(s): {'; '.join(missing_questions)}",
                 }
             ).eq("id", app_id).execute()
         except Exception as exc:
-            logger.warning("[AutoApplier] Failed to persist NEEDS_HUMAN_INPUT state: %s", exc)
+            raise
 
     @staticmethod
     def _upload_proof_and_mark_applied(
         user_id: str,
         app_id: str,
         screenshot_bytes: bytes,
+        confirmation: Dict[str, Any],
         submitted_answers_json: Dict[str, Any],
     ) -> str:
         storage_path = f"{user_id}/{app_id}.png"
@@ -558,10 +585,12 @@ class AutoApplierWorker:
                 file=screenshot_bytes,
                 file_options={"content-type": "image/png", "upsert": "true"},
             )
-            public_url = supabase.storage.from_("proofs").get_public_url(storage_path)
+            public_url = storage_path
             supabase.table("applications").update(
                 {
                     "status": "applied",
+                    "confirmation": confirmation,
+                    "evidence_review_required": False,
                     "submitted_answers_json": submitted_answers_json,
                     "proof_screenshot_url": public_url,
                     "applied_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -569,7 +598,7 @@ class AutoApplierWorker:
                 }
             ).eq("id", app_id).execute()
         except Exception as exc:
-            logger.warning("[AutoApplier] Supabase storage/status update warning: %s", exc)
+            raise SubmissionUncertain("Submission confirmed, but evidence could not be persisted.") from exc
         return public_url
 
     @staticmethod
@@ -585,4 +614,4 @@ class AutoApplierWorker:
                 payload["error_log"] = error_log
             supabase.table("applications").update(payload).eq("id", app_id).execute()
         except Exception as exc:
-            logger.warning("[AutoApplier] Status update warning: %s", exc)
+            raise

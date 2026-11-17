@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Play,
   Plus,
@@ -49,19 +49,34 @@ export default function AgentControlBar({
 }: AgentControlBarProps) {
   const [newRoleInput, setNewRoleInput] = useState("");
   const [newLocationInput, setNewLocationInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [thresholdDraft, setThresholdDraft] = useState(minMatchScore);
+  const [limitDraft, setLimitDraft] = useState(dailyApplyLimit);
+  useEffect(() => setThresholdDraft(minMatchScore), [minMatchScore]);
+  useEffect(() => setLimitDraft(dailyApplyLimit), [dailyApplyLimit]);
+  const save = async (patch: Parameters<typeof onUpdateSettings>[0]) => {
+    setSaving(true);
+    try {
+      await onUpdateSettings(patch);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleAddRole = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newRoleInput.trim();
     if (!trimmed || targetRoles.includes(trimmed)) return;
     const updated = [...targetRoles, trimmed];
-    setNewRoleInput("");
-    await onUpdateSettings({ target_roles: updated });
+    if (await save({ target_roles: updated })) setNewRoleInput("");
   };
 
   const handleRemoveRole = async (roleToRemove: string) => {
     const updated = targetRoles.filter((r) => r !== roleToRemove);
-    await onUpdateSettings({ target_roles: updated });
+    await save({ target_roles: updated });
   };
 
   const handleAddLocation = async (e: React.FormEvent) => {
@@ -69,8 +84,7 @@ export default function AgentControlBar({
     const trimmed = newLocationInput.trim();
     if (!trimmed || targetLocations.includes(trimmed)) return;
     const updated = [...targetLocations, trimmed];
-    setNewLocationInput("");
-    await onUpdateSettings({ target_locations: updated });
+    if (await save({ target_locations: updated })) setNewLocationInput("");
   };
 
   const handleTogglePresetLocation = async (loc: string) => {
@@ -78,16 +92,19 @@ export default function AgentControlBar({
     const updated = exists
       ? targetLocations.filter((l) => l !== loc)
       : [...targetLocations, loc];
-    await onUpdateSettings({ target_locations: updated });
+    await save({ target_locations: updated });
   };
 
   const handleRemoveLocation = async (locToRemove: string) => {
     const updated = targetLocations.filter((l) => l !== locToRemove);
-    await onUpdateSettings({ target_locations: updated });
+    await save({ target_locations: updated });
   };
 
   return (
-    <section className="rounded-2xl bg-zinc-900/70 border border-zinc-800/80 backdrop-blur-md p-5 shadow-2xl space-y-4">
+    <fieldset
+      disabled={saving}
+      className="rounded-2xl bg-zinc-900/70 border border-zinc-800/80 backdrop-blur-md p-5 shadow-2xl space-y-4"
+    >
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
         {/* Left: Autonomous Engine Status & Switch */}
         <div className="flex items-center gap-4">
@@ -95,9 +112,7 @@ export default function AgentControlBar({
             type="button"
             role="switch"
             aria-checked={autoApplyEnabled}
-            onClick={() =>
-              onUpdateSettings({ auto_apply_enabled: !autoApplyEnabled })
-            }
+            onClick={() => save({ auto_apply_enabled: !autoApplyEnabled })}
             className={`group relative inline-flex items-center gap-3 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all duration-200 ${
               autoApplyEnabled
                 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 shadow-[0_0_25px_-5px_rgba(16,185,129,0.25)]"
@@ -130,10 +145,10 @@ export default function AgentControlBar({
 
           <div className="hidden xl:flex flex-col">
             <span className="text-xs font-medium text-zinc-200">
-              Location-Prioritized Discovery
+              Your search preferences
             </span>
             <span className="text-[11px] text-zinc-500">
-              Prioritizes Lagos, Abuja, Nigeria &amp; EMEA/Worldwide Remote feeds
+              Matches roles against your saved preferences
             </span>
           </div>
         </div>
@@ -145,9 +160,11 @@ export default function AgentControlBar({
             <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
             <div className="flex flex-col w-36">
               <div className="flex items-center justify-between text-[11px] mb-1">
-                <span className="text-zinc-400 font-medium">Match Threshold</span>
+                <span className="text-zinc-400 font-medium">
+                  Match Threshold
+                </span>
                 <span className="font-mono font-semibold text-indigo-400">
-                  &ge;{minMatchScore}%
+                  &ge;{thresholdDraft}%
                 </span>
               </div>
               <input
@@ -155,10 +172,8 @@ export default function AgentControlBar({
                 min={50}
                 max={95}
                 step={5}
-                value={minMatchScore}
-                onChange={(e) =>
-                  onUpdateSettings({ min_match_score: Number(e.target.value) })
-                }
+                value={thresholdDraft}
+                onChange={(e) => setThresholdDraft(Number(e.target.value))}
                 className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
               />
             </div>
@@ -168,22 +183,42 @@ export default function AgentControlBar({
           <div className="flex items-center gap-2.5 bg-zinc-950/80 border border-zinc-800/80 rounded-xl px-3.5 py-2">
             <Gauge className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
             <label className="text-[11px] font-medium text-zinc-400">
-              Daily Cap
+              Daily attempt limit
             </label>
             <input
               type="number"
               min={1}
-              max={100}
-              value={dailyApplyLimit}
+              max={200}
+              value={limitDraft}
               onChange={(e) =>
-                onUpdateSettings({
-                  daily_apply_limit: Math.max(1, Number(e.target.value) || 15),
-                })
+                setLimitDraft(
+                  Math.max(1, Math.min(200, Number(e.target.value) || 1)),
+                )
               }
               className="w-12 bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-0.5 text-xs font-mono font-semibold text-zinc-100 text-center focus:outline-none focus:border-indigo-500"
             />
           </div>
 
+          <button
+            type="button"
+            className="text-xs text-indigo-300 disabled:opacity-40"
+            disabled={
+              thresholdDraft === minMatchScore && limitDraft === dailyApplyLimit
+            }
+            onClick={async () => {
+              if (
+                !(await save({
+                  min_match_score: thresholdDraft,
+                  daily_apply_limit: limitDraft,
+                }))
+              ) {
+                setThresholdDraft(minMatchScore);
+                setLimitDraft(dailyApplyLimit);
+              }
+            }}
+          >
+            {saving ? "Saving…" : "Save limits"}
+          </button>
           {/* Manual Trigger CTA */}
           <button
             type="button"
@@ -194,12 +229,12 @@ export default function AgentControlBar({
             {isRunningCycle ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                <span>Running Discovery &amp; Apply...</span>
+                <span>Search in progress…</span>
               </>
             ) : (
               <>
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Run Discovery &amp; Apply Now</span>
+                <span>Start job search</span>
               </>
             )}
           </button>
@@ -215,7 +250,7 @@ export default function AgentControlBar({
           </span>
           {targetRoles.length === 0 ? (
             <span className="text-xs text-zinc-500 italic">
-              Add roles to guide Stage-2 LLM scoring
+              Add the roles you want to find
             </span>
           ) : (
             targetRoles.map((role) => (
@@ -283,7 +318,7 @@ export default function AgentControlBar({
 
           {/* Quick-Toggle Presets that aren't currently active */}
           {QUICK_LOCATION_PRESETS.filter(
-            (preset) => !targetLocations.includes(preset)
+            (preset) => !targetLocations.includes(preset),
           ).map((preset) => (
             <button
               key={preset}
@@ -298,7 +333,10 @@ export default function AgentControlBar({
           ))}
         </div>
 
-        <form onSubmit={handleAddLocation} className="flex items-center gap-1.5">
+        <form
+          onSubmit={handleAddLocation}
+          className="flex items-center gap-1.5"
+        >
           <input
             type="text"
             placeholder="Add city or country (e.g. Abuja)..."
@@ -315,6 +353,6 @@ export default function AgentControlBar({
           </button>
         </form>
       </div>
-    </section>
+    </fieldset>
   );
 }

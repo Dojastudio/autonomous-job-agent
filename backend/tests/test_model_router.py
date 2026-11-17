@@ -122,9 +122,9 @@ class TestModelRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             call_log,
             [
-                "gemini:gemini-3.5-flash-lite",
-                "gemini:gemini-3.5-flash-lite",
-                "openrouter:meta-llama/llama-3.3-70b-instruct:free",
+                "gemini:gemini-2.5-flash-lite",
+                "gemini:gemini-2.5-flash-lite",
+                "groq:openai/gpt-oss-120b",
             ],
         )
         self.assertIsInstance(result, DummyJobScoreSchema)

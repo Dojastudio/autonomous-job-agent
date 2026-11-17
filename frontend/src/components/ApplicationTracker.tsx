@@ -20,13 +20,15 @@ interface ApplicationTrackerProps {
   applications: ApplicationRecord[];
 }
 
-const FILTER_TABS: Array<{ label: string; value: "all" | ApplicationStatus }> = [
-  { label: "All", value: "all" },
-  { label: "Applied", value: "applied" },
-  { label: "Queued", value: "queued" },
-  { label: "Needs Input", value: "needs_human_input" },
-  { label: "Failed", value: "failed" },
-];
+const FILTER_TABS: Array<{ label: string; value: "all" | ApplicationStatus }> =
+  [
+    { label: "All", value: "all" },
+    { label: "Confirmed", value: "applied" },
+    { label: "Queued", value: "queued" },
+    { label: "Needs Input", value: "needs_human_input" },
+    { label: "Failed", value: "failed" },
+    { label: "Review", value: "submission_uncertain" },
+  ];
 
 function formatDeterministicTimestamp(iso: string | null): string {
   if (!iso) return "—";
@@ -44,12 +46,27 @@ export default function ApplicationTracker({
   const [searchQuery, setSearchQuery] = useState("");
   const [answersModalApp, setAnswersModalApp] =
     useState<ApplicationRecord | null>(null);
-  const [proofModalApp, setProofModalApp] =
-    useState<ApplicationRecord | null>(null);
+  const [proofModalApp, setProofModalApp] = useState<ApplicationRecord | null>(
+    null,
+  );
 
+  const matchesFilter = (
+    app: ApplicationRecord,
+    filter: "all" | ApplicationStatus,
+  ) => {
+    if (filter === "all") return true;
+    if (filter === "submission_uncertain")
+      return app.status === filter || !!app.evidence_review_required;
+    if (filter === "applied")
+      return (
+        app.status === filter &&
+        !!app.confirmation &&
+        !app.evidence_review_required
+      );
+    return app.status === filter;
+  };
   const filteredApps = applications.filter((app) => {
-    const matchesStatus =
-      selectedStatus === "all" ? true : app.status === selectedStatus;
+    const matchesStatus = matchesFilter(app, selectedStatus);
     if (!matchesStatus) return false;
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
@@ -83,6 +100,12 @@ export default function ApplicationTracker({
             Needs Input
           </span>
         );
+      case "submission_uncertain":
+        return (
+          <span className="text-amber-300 text-xs">
+            Submission uncertain — review required
+          </span>
+        );
       case "failed":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/25">
@@ -108,7 +131,7 @@ export default function ApplicationTracker({
             Live Application Pipeline
           </h2>
           <p className="text-[11px] text-zinc-400">
-            Verifiable DOM field mappings &amp; full-page submission screenshots
+            Application status and available submission evidence
           </p>
         </div>
 
@@ -132,7 +155,8 @@ export default function ApplicationTracker({
               const count =
                 tab.value === "all"
                   ? applications.length
-                  : applications.filter((a) => a.status === tab.value).length;
+                  : applications.filter((a) => matchesFilter(a, tab.value))
+                      .length;
               return (
                 <button
                   key={tab.value}
@@ -253,8 +277,8 @@ export default function ApplicationTracker({
                             app.match_score >= 85
                               ? "text-emerald-400"
                               : app.match_score >= 75
-                              ? "text-indigo-400"
-                              : "text-zinc-400"
+                                ? "text-indigo-400"
+                                : "text-zinc-400"
                           }`}
                         >
                           {app.match_score}%
@@ -265,8 +289,8 @@ export default function ApplicationTracker({
                               app.match_score >= 85
                                 ? "bg-emerald-400"
                                 : app.match_score >= 75
-                                ? "bg-indigo-400"
-                                : "bg-zinc-500"
+                                  ? "bg-indigo-400"
+                                  : "bg-zinc-500"
                             }`}
                             style={{ width: `${app.match_score}%` }}
                           />
@@ -283,7 +307,13 @@ export default function ApplicationTracker({
 
                     {/* Status Badge */}
                     <td className="py-3.5 px-4">
-                      {renderStatusBadge(app.status)}
+                      {app.evidence_review_required ? (
+                        <span className="text-amber-300 text-xs">
+                          Historical result — evidence review required
+                        </span>
+                      ) : (
+                        renderStatusBadge(app.status)
+                      )}
                     </td>
 
                     {/* Timestamp */}
@@ -378,7 +408,7 @@ export default function ApplicationTracker({
                         {String(value)}
                       </span>
                     </div>
-                  )
+                  ),
                 )
               )}
             </div>
@@ -393,7 +423,7 @@ export default function ApplicationTracker({
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <div>
                 <h3 className="text-sm font-semibold text-zinc-100">
-                  Playwright Submission Proof Screenshot
+                  Submission evidence
                 </h3>
                 <p className="text-xs text-zinc-400">
                   {proofModalApp.jobs_discovered?.company_name} —{" "}
@@ -412,9 +442,6 @@ export default function ApplicationTracker({
             <div className="mt-4 bg-zinc-950 border border-zinc-800 rounded-xl p-5 text-center">
               {proofModalApp.proof_screenshot_url ? (
                 <div className="space-y-4">
-                  <div className="text-xs text-emerald-400 font-mono break-all bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
-                    Bucket Path: {proofModalApp.proof_screenshot_url}
-                  </div>
                   {proofModalApp.proof_screenshot_url.startsWith("http") ? (
                     <img
                       src={proofModalApp.proof_screenshot_url}
@@ -422,26 +449,18 @@ export default function ApplicationTracker({
                       className="max-h-96 mx-auto rounded-lg border border-zinc-800 object-contain"
                     />
                   ) : (
-                    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-8">
-                      <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-                      <p className="text-sm font-semibold text-zinc-100">
-                        Verified Confirmation Screenshot Recorded
-                      </p>
-                      <p className="text-xs text-zinc-400 mt-1">
-                        Full-page PNG stored in Supabase Storage at{" "}
-                        {proofModalApp.applied_at
-                          ? formatDeterministicTimestamp(
-                              proofModalApp.applied_at
-                            )
-                          : "submission time"}
-                      </p>
-                    </div>
+                    <p className="text-sm text-amber-300">
+                      Evidence is unavailable. Refresh the dashboard and try
+                      again.
+                    </p>
                   )}
                 </div>
               ) : (
                 <p className="text-xs text-zinc-400 py-8">
                   No confirmation screenshot captured yet (status:{" "}
-                  <code className="text-indigo-300">{proofModalApp.status}</code>
+                  <code className="text-indigo-300">
+                    {proofModalApp.status}
+                  </code>
                   ).
                 </p>
               )}

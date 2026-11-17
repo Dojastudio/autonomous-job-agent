@@ -4,6 +4,7 @@ and Dynamic Gap-Question Generator.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import zlib
@@ -236,6 +237,8 @@ class CVParserService:
         5. Upserts `candidate_profiles` and inserts unanswered rows into `candidate_qa_bank`.
         """
         raw_text = extract_text_from_pdf_bytes(pdf_bytes)
+        if len(raw_text.strip()) < 100:
+            raise ValueError('Could not extract enough resume text. Upload a text-based PDF.')
         local_meta = extract_local_contact_metadata(raw_text)
 
         full_name = known_full_name or local_meta.get("full_name")
@@ -285,7 +288,7 @@ class CVParserService:
                 raw_text[:3000],
             ]
         )
-        profile_embedding = self.router.embed_text(embedding_source_text)
+        profile_embedding = await asyncio.to_thread(self.router.embed_text, embedding_source_text)
 
         qa_rows_to_insert = [
             {
@@ -319,6 +322,7 @@ class CVParserService:
                 parsed_cv_json=parsed_cv_json,
                 profile_embedding=profile_embedding,
                 qa_rows=qa_rows_to_insert,
+                embedding_version=self.router.embedding_version,
             )
 
         return CVIngestionResult(
@@ -351,9 +355,16 @@ class CVParserService:
         parsed_cv_json: Dict[str, Any],
         profile_embedding: List[float],
         qa_rows: List[Dict[str, Any]],
+        embedding_version: str,
     ) -> None:
         try:
             supabase = get_supabase_client()
+            existing = supabase.table('candidate_profiles').select('parsed_cv_json').eq('id',user_id).limit(1).execute().data
+            if existing:
+                previous = existing[0].get('parsed_cv_json') or {}
+                for key in ('target_roles','target_locations'):
+                    if key in previous:
+                        parsed_cv_json[key] = previous[key]
             profile_payload: Dict[str, Any] = {
                 "id": user_id,
                 "full_name": full_name,
@@ -366,6 +377,7 @@ class CVParserService:
                 "resume_raw_text": resume_raw_text,
                 "parsed_cv_json": parsed_cv_json,
                 "profile_embedding": profile_embedding,
+                "embedding_version": None if existing else embedding_version,
             }
             if resume_url:
                 profile_payload["resume_url"] = resume_url
@@ -381,4 +393,4 @@ class CVParserService:
                     ignore_duplicates=True,
                 ).execute()
         except Exception as exc:
-            logger.warning("[CVParser] Supabase persistence skipped or failed: %s", exc)
+            raise

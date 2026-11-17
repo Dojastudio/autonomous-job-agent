@@ -18,12 +18,15 @@ import ApplicationTracker from "@/components/ApplicationTracker";
 import {
   ApplicationRecord,
   CandidateProfile,
-  DEFAULT_USER_ID,
+  supabase,
   QABankItem,
 } from "@/lib/supabase";
 
+import AuthGate from "@/components/AuthGate";
+import { apiFetch } from "@/lib/api";
+
 const INITIAL_PROFILE: CandidateProfile = {
-  id: DEFAULT_USER_ID,
+  id: "",
   full_name: null,
   email: null,
   phone: null,
@@ -39,7 +42,7 @@ const INITIAL_PROFILE: CandidateProfile = {
     education: [],
     target_roles: [],
   },
-  auto_apply_enabled: true,
+  auto_apply_enabled: false,
   daily_apply_limit: 15,
   min_match_score: 75,
 };
@@ -48,194 +51,143 @@ const INITIAL_QA_BANK: QABankItem[] = [];
 
 const INITIAL_APPLICATIONS: ApplicationRecord[] = [];
 
-export default function DashboardPage() {
-  const [profile, setProfile] = useState<CandidateProfile>(INITIAL_PROFILE);
-  const [qaBank, setQaBank] = useState<QABankItem[]>(INITIAL_QA_BANK);
-  const [applications, setApplications] =
-    useState<ApplicationRecord[]>(INITIAL_APPLICATIONS);
-  const [isRunningCycle, setIsRunningCycle] = useState(false);
-  const [statusBanner, setStatusBanner] = useState<string | null>(null);
+export default function Page() {
+  return <AuthGate>{(id) => <DashboardPage key={id} userId={id} />}</AuthGate>;
+}
 
+function DashboardPage({ userId }: { userId: string }) {
+  const [profile, setProfile] = useState<CandidateProfile>({
+    ...INITIAL_PROFILE,
+    id: userId,
+  });
+  const [qaBank, setQaBank] = useState<QABankItem[]>([]);
+  const [applications, setApplications] = useState<ApplicationRecord[]>([]);
+  const [run, setRun] = useState<{
+    id: string;
+    status: string;
+    progress: string;
+    error?: string;
+  } | null>(null);
+  const [workerOnline, setWorkerOnline] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [statusBanner, setStatusBanner] = useState<string | null>(null);
+  const isRunningCycle =
+    submitting || run?.status === "queued" || run?.status === "running";
+  const refreshDashboardFromBackend = async () => {
+    const res = await apiFetch("/api/agent");
+    const data = await res.json();
+    if (data.profile) setProfile(data.profile);
+    setWorkerOnline(data.worker_online === true);
+    setQaBank(data.qa_bank || []);
+    setApplications(data.applications || []);
+    setRun(data.run || null);
+  };
   useEffect(() => {
-    const fetchLiveDashboard = async () => {
+    let mounted = true;
+    const refresh = async () => {
       try {
-        const res = await fetch(`/api/agent?user_id=${DEFAULT_USER_ID}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.profile) setProfile(data.profile);
-        if (Array.isArray(data.qa_bank)) {
-          setQaBank(data.qa_bank);
-        }
-        if (Array.isArray(data.applications)) {
-          setApplications(data.applications);
-        }
-      } catch {
-        // Fallback to seed state
+        if (mounted) await refreshDashboardFromBackend();
+      } catch (error) {
+        if (mounted)
+          setStatusBanner(
+            error instanceof Error
+              ? error.message
+              : "Could not load dashboard.",
+          );
       }
     };
-    fetchLiveDashboard();
+    void refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
   }, []);
-
-  const refreshDashboardFromBackend = async () => {
-    try {
-      const res = await fetch(`/api/agent?user_id=${profile.id}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.profile) setProfile(data.profile);
-      if (Array.isArray(data.qa_bank)) {
-        setQaBank(data.qa_bank);
-      }
-      if (Array.isArray(data.applications)) {
-        setApplications(data.applications);
-      }
-    } catch {
-      // Ignore network error
-    }
-  };
-
-  const handleUploadSuccess = ({
-    profile: updatedProf,
-    gap_questions,
-  }: {
-    profile: Partial<CandidateProfile>;
-    gap_questions: QABankItem[];
-  }) => {
-    setProfile((prev) => ({
-      ...prev,
-      ...updatedProf,
-      parsed_cv_json: updatedProf.parsed_cv_json || prev.parsed_cv_json,
-    }));
-    if (gap_questions.length > 0) {
-      setQaBank(gap_questions);
-    }
-    setStatusBanner(
-      "CV parsed with local PII redaction, 384-d vector indexed, and gap questions generated."
+  const handleUploadSuccess = () => {
+    setStatusBanner("CV saved. Review your profile and screening questions.");
+    void refreshDashboardFromBackend().catch((error) =>
+      setStatusBanner(error.message),
     );
   };
-
   const handleSaveQAAnswers = async (
-    answers: Array<{ question_key: string; answer_value: string }>
+    answers: Array<{ question_key: string; answer_value: string }>,
   ) => {
-    setQaBank((prev) =>
-      prev.map((item) => {
-        const match = answers.find(
-          (a) => a.question_key === item.question_key
-        );
-        return match
-          ? { ...item, answer_value: match.answer_value, is_answered: true }
-          : item;
-      })
-    );
-    setApplications((prev) =>
-      prev.map((app) =>
-        app.status === "needs_human_input"
-          ? { ...app, status: "queued", error_log: null }
-          : app
-      )
-    );
-
     try {
-      await fetch("/api/qa", {
+      await apiFetch("/api/qa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: profile.id, answers }),
+        body: JSON.stringify({ answers }),
       });
+      await refreshDashboardFromBackend();
       setStatusBanner(
-        `Saved ${answers.length} verified answer(s) to QA Bank and re-queued paused applications.`
+        "Answers saved. Eligible paused applications have been queued.",
       );
-    } catch {
-      // Optimistically updated
+    } catch (error) {
+      setStatusBanner(
+        error instanceof Error ? error.message : "Could not save answers.",
+      );
+      throw error;
     }
   };
-
-  const handleUpdateSettings = async (patch: {
-    auto_apply_enabled?: boolean;
-    min_match_score?: number;
-    daily_apply_limit?: number;
-    target_roles?: string[];
-    target_locations?: string[];
-  }) => {
-    setProfile((prev) => ({
-      ...prev,
-      auto_apply_enabled:
-        patch.auto_apply_enabled ?? prev.auto_apply_enabled,
-      min_match_score: patch.min_match_score ?? prev.min_match_score,
-      daily_apply_limit: patch.daily_apply_limit ?? prev.daily_apply_limit,
-      parsed_cv_json: {
-        ...prev.parsed_cv_json,
-        target_roles: patch.target_roles ?? prev.parsed_cv_json.target_roles,
-        target_locations:
-          patch.target_locations ??
-          prev.parsed_cv_json.target_locations ?? [
-            "Lagos, Nigeria",
-            "Abuja, Nigeria",
-            "Remote (Nigeria)",
-            "Remote (EMEA)",
-          ],
-      },
-    }));
-
+  const handleUpdateSettings = async (
+    patch: Partial<
+      Pick<
+        CandidateProfile,
+        "auto_apply_enabled" | "min_match_score" | "daily_apply_limit"
+      >
+    > & { target_roles?: string[]; target_locations?: string[] },
+  ) => {
     try {
-      await fetch("/api/agent", {
+      await apiFetch("/api/agent", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: profile.id, ...patch }),
+        body: JSON.stringify(patch),
       });
-    } catch {
-      // Optimistically updated
+      await refreshDashboardFromBackend();
+      setStatusBanner("Preferences saved.");
+    } catch (error) {
+      setStatusBanner(
+        error instanceof Error ? error.message : "Could not save preferences.",
+      );
+      throw error;
     }
   };
-
   const handleTriggerRunNow = async () => {
-    setIsRunningCycle(true);
-    setStatusBanner(null);
+    setSubmitting(true);
     try {
-      const res = await fetch("/api/agent", {
+      const res = await apiFetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: profile.id,
           run_discovery: true,
-          run_auto_apply: true,
+          run_auto_apply: false,
         }),
       });
-      const data = await res.json();
-      if (res.ok && data.discovery) {
-        await refreshDashboardFromBackend();
-        const d = data.discovery;
-        setStatusBanner(
-          `Cycle Complete: ${d.jobs_fetched ?? 0} roles scanned • ${
-            d.jobs_passed_stage1_vector ?? 0
-          } matched vector filter • ${
-            d.auto_applied_count ?? d.newly_queued_count ?? 0
-          } applications processed (>=${profile.min_match_score}% threshold).`
-        );
-      } else {
-        setStatusBanner(
-          data.detail ||
-            "Upload your PDF CV first so your profile exists in Supabase before running discovery."
-        );
-      }
-    } catch {
+      setRun((await res.json()).run);
+      setStatusBanner("Run queued. Progress will update here.");
+    } catch (error) {
       setStatusBanner(
-        "Could not reach backend worker on :8000. Verify FastAPI is running."
+        error instanceof Error ? error.message : "Could not queue run.",
       );
     } finally {
-      setIsRunningCycle(false);
+      setSubmitting(false);
     }
   };
 
   // KPI Metrics
-  const appliedCount = applications.filter((a) => a.status === "applied").length;
+  const appliedCount = applications.filter(
+    (a) =>
+      a.status === "applied" && !!a.confirmation && !a.evidence_review_required,
+  ).length;
   const queuedCount = applications.filter((a) => a.status === "queued").length;
   const needsInputCount = applications.filter(
-    (a) => a.status === "needs_human_input"
+    (a) => a.status === "needs_human_input",
   ).length;
   const avgMatchScore =
     applications.length > 0
       ? Math.round(
           applications.reduce((acc, a) => acc + a.match_score, 0) /
-            applications.length
+            applications.length,
         )
       : 0;
 
@@ -254,33 +206,45 @@ export default function DashboardPage() {
                   Autonomous Job Agent
                 </h1>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
-                  v1.0
+                  v2.0
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 hidden sm:block">
-                Zero-Cost Multi-Model Router • pgvector Semantic Filter • Stealth Playwright
+                Find relevant roles and track confirmed applications
               </p>
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-2 text-[11px]">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-              Gemini 3.5 + Groq 120B
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-              <Database className="w-3.5 h-3.5 text-emerald-400" />
-              pgvector 384-d
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-              PII Redacted
-            </span>
-          </div>
+          <button
+            className="text-sm text-zinc-300"
+            onClick={() => void supabase.auth.signOut()}
+          >
+            Sign out
+          </button>
         </div>
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-5">
+        {!workerOnline && (
+          <p
+            role="status"
+            className="rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-200"
+          >
+            The application worker is offline. You can update your profile;
+            queued searches will wait for it to reconnect.
+          </p>
+        )}
+        {run && (
+          <div
+            role="status"
+            className="rounded-xl border border-zinc-700 bg-zinc-900 p-4 text-sm"
+          >
+            <strong className="capitalize">{run.status}</strong>
+            <span className="ml-3 text-zinc-300">
+              {run.error || run.progress}
+            </span>
+          </div>
+        )}
         {/* Status Toast Banner */}
         {statusBanner && (
           <div className="bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center justify-between shadow-lg">
@@ -303,12 +267,12 @@ export default function DashboardPage() {
           <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800/80 px-4 py-3.5 flex items-center justify-between">
             <div>
               <span className="text-[11px] font-medium text-zinc-400">
-                Applications Submitted
+                Confirmed applications
               </span>
               <div className="text-2xl font-bold text-zinc-100 font-mono mt-0.5">
                 {appliedCount}
                 <span className="text-xs font-normal text-zinc-500 ml-1.5">
-                  / {profile.daily_apply_limit} daily cap
+                  in latest 100 records
                 </span>
               </div>
             </div>
@@ -320,7 +284,7 @@ export default function DashboardPage() {
           <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800/80 px-4 py-3.5 flex items-center justify-between">
             <div>
               <span className="text-[11px] font-medium text-zinc-400">
-                Queued for Playwright
+                Queued applications
               </span>
               <div className="text-2xl font-bold text-zinc-100 font-mono mt-0.5">
                 {queuedCount}
@@ -366,17 +330,7 @@ export default function DashboardPage() {
           minMatchScore={profile.min_match_score}
           dailyApplyLimit={profile.daily_apply_limit}
           targetRoles={profile.parsed_cv_json?.target_roles || []}
-          targetLocations={
-            profile.parsed_cv_json?.target_locations &&
-            profile.parsed_cv_json.target_locations.length > 0
-              ? profile.parsed_cv_json.target_locations
-              : [
-                  "Lagos, Nigeria",
-                  "Abuja, Nigeria",
-                  "Remote (Nigeria)",
-                  "Remote (EMEA)",
-                ]
-          }
+          targetLocations={profile.parsed_cv_json?.target_locations || []}
           isRunningCycle={isRunningCycle}
           onUpdateSettings={handleUpdateSettings}
           onTriggerRunNow={handleTriggerRunNow}
