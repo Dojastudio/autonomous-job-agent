@@ -9,6 +9,7 @@ import {
   Sparkles,
   SlidersHorizontal,
   Gauge,
+  MapPin,
 } from "lucide-react";
 
 interface AgentControlBarProps {
@@ -16,26 +17,38 @@ interface AgentControlBarProps {
   minMatchScore: number;
   dailyApplyLimit: number;
   targetRoles: string[];
+  targetLocations: string[];
   isRunningCycle: boolean;
   onUpdateSettings: (patch: {
     auto_apply_enabled?: boolean;
     min_match_score?: number;
     daily_apply_limit?: number;
     target_roles?: string[];
+    target_locations?: string[];
   }) => Promise<void>;
   onTriggerRunNow: () => Promise<void>;
 }
+
+const QUICK_LOCATION_PRESETS = [
+  "Lagos, Nigeria",
+  "Abuja, Nigeria",
+  "Remote (Nigeria)",
+  "Remote (EMEA)",
+  "Remote (Worldwide)",
+];
 
 export default function AgentControlBar({
   autoApplyEnabled,
   minMatchScore,
   dailyApplyLimit,
   targetRoles,
+  targetLocations,
   isRunningCycle,
   onUpdateSettings,
   onTriggerRunNow,
 }: AgentControlBarProps) {
   const [newRoleInput, setNewRoleInput] = useState("");
+  const [newLocationInput, setNewLocationInput] = useState("");
 
   const handleAddRole = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,8 +64,30 @@ export default function AgentControlBar({
     await onUpdateSettings({ target_roles: updated });
   };
 
+  const handleAddLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newLocationInput.trim();
+    if (!trimmed || targetLocations.includes(trimmed)) return;
+    const updated = [...targetLocations, trimmed];
+    setNewLocationInput("");
+    await onUpdateSettings({ target_locations: updated });
+  };
+
+  const handleTogglePresetLocation = async (loc: string) => {
+    const exists = targetLocations.includes(loc);
+    const updated = exists
+      ? targetLocations.filter((l) => l !== loc)
+      : [...targetLocations, loc];
+    await onUpdateSettings({ target_locations: updated });
+  };
+
+  const handleRemoveLocation = async (locToRemove: string) => {
+    const updated = targetLocations.filter((l) => l !== locToRemove);
+    await onUpdateSettings({ target_locations: updated });
+  };
+
   return (
-    <section className="rounded-2xl bg-zinc-900/70 border border-zinc-800/80 backdrop-blur-md p-5 shadow-2xl">
+    <section className="rounded-2xl bg-zinc-900/70 border border-zinc-800/80 backdrop-blur-md p-5 shadow-2xl space-y-4">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
         {/* Left: Autonomous Engine Status & Switch */}
         <div className="flex items-center gap-4">
@@ -95,10 +130,10 @@ export default function AgentControlBar({
 
           <div className="hidden xl:flex flex-col">
             <span className="text-xs font-medium text-zinc-200">
-              Autonomous Polling Loop
+              Location-Prioritized Discovery
             </span>
             <span className="text-[11px] text-zinc-500">
-              Every 4h • Greenhouse, Lever, Ashby, Remotive, Arbeitnow, Himalayas
+              Prioritizes Lagos, Abuja, Nigeria &amp; EMEA/Worldwide Remote feeds
             </span>
           </div>
         </div>
@@ -171,8 +206,8 @@ export default function AgentControlBar({
         </div>
       </div>
 
-      {/* Bottom Row: Target Role Pills & Quick Add */}
-      <div className="mt-4 pt-3.5 border-t border-zinc-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Row 2: Target Roles */}
+      <div className="pt-3.5 border-t border-zinc-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-400 mr-1.5">
             <Sparkles className="w-3 h-3 text-indigo-400" />
@@ -180,7 +215,7 @@ export default function AgentControlBar({
           </span>
           {targetRoles.length === 0 ? (
             <span className="text-xs text-zinc-500 italic">
-              Upload CV or add roles to guide Stage-2 LLM scoring
+              Add roles to guide Stage-2 LLM scoring
             </span>
           ) : (
             targetRoles.map((role) => (
@@ -215,7 +250,68 @@ export default function AgentControlBar({
             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition"
           >
             <Plus className="w-3.5 h-3.5" />
-            Add
+            Add Role
+          </button>
+        </form>
+      </div>
+
+      {/* Row 3: Target Locations (Lagos, Abuja, Nigeria, EMEA, Worldwide) */}
+      <div className="pt-3 border-t border-zinc-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-400 mr-1.5">
+            <MapPin className="w-3 h-3 text-emerald-400" />
+            Target Locations:
+          </span>
+
+          {/* Active Location Tags */}
+          {targetLocations.map((loc) => (
+            <span
+              key={loc}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+            >
+              {loc}
+              <button
+                type="button"
+                onClick={() => handleRemoveLocation(loc)}
+                className="text-emerald-400/70 hover:text-emerald-200 transition"
+                aria-label={`Remove ${loc}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+
+          {/* Quick-Toggle Presets that aren't currently active */}
+          {QUICK_LOCATION_PRESETS.filter(
+            (preset) => !targetLocations.includes(preset)
+          ).map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => handleTogglePresetLocation(preset)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-950 text-zinc-500 border border-zinc-800 hover:border-zinc-700 hover:text-zinc-300 transition"
+              title={`Click to add ${preset}`}
+            >
+              <Plus className="w-2.5 h-2.5" />
+              {preset}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={handleAddLocation} className="flex items-center gap-1.5">
+          <input
+            type="text"
+            placeholder="Add city or country (e.g. Abuja)..."
+            value={newLocationInput}
+            onChange={(e) => setNewLocationInput(e.target.value)}
+            className="w-48 px-3 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition"
+          />
+          <button
+            type="submit"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Location
           </button>
         </form>
       </div>

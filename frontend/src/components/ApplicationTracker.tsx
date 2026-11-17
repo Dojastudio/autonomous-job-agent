@@ -200,30 +200,31 @@ export default function ApplicationTracker({
                           {initial}
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-zinc-100 text-xs sm:text-sm">
-                              {job?.job_title || "Software Engineer"}
-                            </span>
-                            {job?.apply_url && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {job?.apply_url ? (
                               <a
                                 href={job.apply_url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-zinc-500 hover:text-indigo-400 transition"
-                                title="Open ATS Job Posting"
+                                className="font-semibold text-zinc-100 hover:text-indigo-400 underline decoration-zinc-700 hover:decoration-indigo-400 underline-offset-4 text-xs sm:text-sm inline-flex items-center gap-1.5 transition"
                               >
-                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>{job?.job_title || "Product Role"}</span>
+                                <ExternalLink className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                               </a>
+                            ) : (
+                              <span className="font-semibold text-zinc-100 text-xs sm:text-sm">
+                                {job?.job_title || "Product Role"}
+                              </span>
                             )}
                           </div>
 
-                          <div className="flex items-center gap-2 text-xs text-zinc-400 mt-0.5">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mt-0.5">
                             <span className="font-medium text-zinc-300">
                               {company}
                             </span>
                             <span>•</span>
-                            <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400">
-                              <MapPin className="w-3 h-3 text-zinc-500" />
+                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-300/90 font-medium">
+                              <MapPin className="w-3 h-3 text-emerald-400" />
                               {job?.location || "Remote"}
                             </span>
                           </div>
@@ -290,9 +291,20 @@ export default function ApplicationTracker({
                       {formatDeterministicTimestamp(app.applied_at)}
                     </td>
 
-                    {/* Action Modals */}
+                    {/* Action Modals & Direct Job Link */}
                     <td className="py-3.5 px-5 text-right">
                       <div className="inline-flex items-center gap-1.5">
+                        {job?.apply_url && (
+                          <a
+                            href={job.apply_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 transition"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Job Link
+                          </a>
+                        )}
                         <button
                           type="button"
                           onClick={() => setAnswersModalApp(app)}

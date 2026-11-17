@@ -37,6 +37,7 @@ export interface ParsedCVJson {
     year: string;
   }>;
   target_roles: string[];
+  target_locations?: string[];
 }
 
 export interface CandidateProfile {

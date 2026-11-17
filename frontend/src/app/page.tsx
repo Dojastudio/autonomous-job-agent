@@ -153,6 +153,7 @@ export default function DashboardPage() {
     min_match_score?: number;
     daily_apply_limit?: number;
     target_roles?: string[];
+    target_locations?: string[];
   }) => {
     setProfile((prev) => ({
       ...prev,
@@ -163,6 +164,14 @@ export default function DashboardPage() {
       parsed_cv_json: {
         ...prev.parsed_cv_json,
         target_roles: patch.target_roles ?? prev.parsed_cv_json.target_roles,
+        target_locations:
+          patch.target_locations ??
+          prev.parsed_cv_json.target_locations ?? [
+            "Lagos, Nigeria",
+            "Abuja, Nigeria",
+            "Remote (Nigeria)",
+            "Remote (EMEA)",
+          ],
       },
     }));
 
@@ -357,6 +366,17 @@ export default function DashboardPage() {
           minMatchScore={profile.min_match_score}
           dailyApplyLimit={profile.daily_apply_limit}
           targetRoles={profile.parsed_cv_json?.target_roles || []}
+          targetLocations={
+            profile.parsed_cv_json?.target_locations &&
+            profile.parsed_cv_json.target_locations.length > 0
+              ? profile.parsed_cv_json.target_locations
+              : [
+                  "Lagos, Nigeria",
+                  "Abuja, Nigeria",
+                  "Remote (Nigeria)",
+                  "Remote (EMEA)",
+                ]
+          }
           isRunningCycle={isRunningCycle}
           onUpdateSettings={handleUpdateSettings}
           onTriggerRunNow={handleTriggerRunNow}
